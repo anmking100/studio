@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
   const startDateParam = searchParams.get('startDate'); // Expect ISOString
   const endDateParam = searchParams.get('endDate');   // Expect ISOString
 
-  console.log(`JIRA API: Params - userEmail: ${userEmail}, startDate: ${startDateParam}, endDate: ${endDateParam}`);
+  console.log(`JIRA API: Received Params - userEmail: ${userEmail}, startDate: ${startDateParam}, endDate: ${endDateParam}`);
 
   if (!JIRA_INSTANCE_URL || !JIRA_USERNAME || !JIRA_API_TOKEN) {
     console.error("JIRA API Error: Jira API integration not configured correctly on server. Missing one or more environment variables: JIRA_INSTANCE_URL, JIRA_USERNAME, JIRA_API_TOKEN.");
@@ -72,27 +72,27 @@ export async function GET(request: NextRequest) {
         const formattedStartDate = format(new Date(startDateParam), "yyyy-MM-dd HH:mm");
         const formattedEndDate = format(new Date(endDateParam), "yyyy-MM-dd HH:mm");
         jql += ` AND updated >= "${formattedStartDate}" AND updated <= "${formattedEndDate}"`;
-        console.log(`JIRA API: Fetching for ${userEmail} between ${formattedStartDate} and ${formattedEndDate}`);
+        console.log(`JIRA API: Querying for userEmail="${userEmail}" for specific period: ${formattedStartDate} to ${formattedEndDate}`);
     } catch (e: any) {
         console.error(`JIRA API Error: Invalid date format for startDate or endDate. Error: ${e.message}`);
         console.log("JIRA API HANDLER: --- END (Error: Invalid Date Format) ---");
         return NextResponse.json({ error: "Invalid date format for startDate or endDate. Please use ISO string." }, { status: 400 });
     }
   } else {
-    const sevenDaysAgo = format(subDays(startOfDay(new Date()), 7), "yyyy-MM-dd HH:mm"); // Use startOfDay for consistency
+    const sevenDaysAgo = format(subDays(startOfDay(new Date()), 7), "yyyy-MM-dd HH:mm");
     const now = format(new Date(), "yyyy-MM-dd HH:mm");
     jql += ` AND updated >= "${sevenDaysAgo}" AND updated <= "${now}"`;
-    console.log(`JIRA API: Fetching for ${userEmail} for default range (approx last 7 days: ${sevenDaysAgo} to ${now}) because no specific date range was provided.`);
+    console.log(`JIRA API: Querying for userEmail="${userEmail}" for default range (approx last 7 days: ${sevenDaysAgo} to ${now}) because no specific date range was provided.`);
   }
   jql += ` ORDER BY updated DESC`;
 
   const apiUrl = `${JIRA_INSTANCE_URL}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=summary,status,updated,issuetype,priority,labels`;
   console.log(`JIRA API: Constructed API URL (JQL part encoded): ${apiUrl.split('?')[0]}?jql=...`);
-  console.log(`JIRA API: Full JQL query: ${jql}`);
+  console.log(`JIRA API: Full JQL for query: ${jql}`);
 
 
   try {
-    console.log(`JIRA API: Attempting to fetch Jira issues for ${userEmail} from host: ${new URL(apiUrl).hostname}`);
+    console.log(`JIRA API: Attempting to fetch Jira issues for userEmail="${userEmail}" from host: ${new URL(apiUrl).hostname}`);
     const response = await fetch(apiUrl, {
       method: 'GET',
       headers: {
@@ -102,11 +102,11 @@ export async function GET(request: NextRequest) {
       cache: 'no-store',
     });
 
-    console.log(`JIRA API: Response status for ${userEmail} (period starting ${startDateParam}): ${response.status}`);
+    console.log(`JIRA API: Response status for userEmail="${userEmail}" (period starting ${startDateParam}): ${response.status}`);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`JIRA API Error: Jira API request failed for ${userEmail}. Status: ${response.status}, StatusText: ${response.statusText}. Body: ${errorText.substring(0, 500)}`);
+      console.error(`JIRA API Error: Jira API request failed for userEmail="${userEmail}". Status: ${response.status}, StatusText: ${response.statusText}. Body: ${errorText.substring(0, 500)}`);
       console.log(`JIRA API HANDLER: --- END (Error: API Request Failed ${response.status}) ---`);
       return NextResponse.json(
         {
@@ -119,33 +119,38 @@ export async function GET(request: NextRequest) {
 
     const data = await response.json();
     const issues: JiraIssue[] = data.issues || [];
+    console.log(`JIRA API: Raw issues fetched from Jira API for userEmail="${userEmail}": ${issues.length}`);
+
 
     if (issues.length > 0) {
-        console.log(`JIRA API: SUCCESS - Found ${issues.length} Jira raw issues for ${userEmail} for period starting ${startDateParam}.`);
-        console.log(`JIRA API: Sample raw issue for ${userEmail}: Key - ${issues[0].key}, Summary - "${issues[0].fields.summary}", Updated - ${issues[0].fields.updated}`);
+        console.log(`JIRA API: SUCCESS - Found ${issues.length} Jira raw issues for userEmail="${userEmail}" for period starting ${startDateParam}.`);
+        console.log(`JIRA API: Sample raw issue for userEmail="${userEmail}": Key - ${issues[0].key}, Summary - "${issues[0].fields.summary}", Updated - ${issues[0].fields.updated}`);
     } else {
-        console.log(`JIRA API: INFO - Successfully connected to Jira for ${userEmail}, but NO Jira issues found for the JQL query: ${jql}`);
+        console.log(`JIRA API: INFO - Successfully connected to Jira for userEmail="${userEmail}", but NO Jira issues found for the JQL query: ${jql}`);
     }
 
     const activities: GenericActivityItem[] = issues.map(mapJiraIssueToActivity);
+    console.log(`JIRA API: Mapped ${activities.length} raw issues to GenericActivityItem format for userEmail="${userEmail}".`);
     if (activities.length > 0) {
-        console.log(`JIRA API: Mapped ${activities.length} issues to GenericActivityItem format for ${userEmail}. Sample mapped activity type: ${activities[0].type}, details: "${activities[0].details}"`);
-    } else if (issues.length > 0) {
-        console.warn(`JIRA API: Found ${issues.length} issues but mapped 0 activities for ${userEmail}. Check mapping logic or issue structure.`);
+        console.log(`JIRA API: Sample mapped activity type for userEmail="${userEmail}": ${activities[0].type}, details: "${activities[0].details}"`);
+    } else if (issues.length > 0 && activities.length === 0) { // This case should ideally not happen if mapping is correct
+        console.warn(`JIRA API: Found ${issues.length} raw issues but mapped 0 activities for userEmail="${userEmail}". Check mapJiraIssueToActivity logic or issue structure if this occurs.`);
     }
 
     console.log("JIRA API HANDLER: --- END (Success) ---");
     return NextResponse.json(activities);
 
   } catch (error: any) {
-    console.error(`JIRA API Error: Unhandled exception during Jira fetch for ${userEmail}. Error: ${error.message}`, error.stack);
+    console.error(`JIRA API Error: Unhandled exception during Jira fetch for userEmail="${userEmail}". Error: ${error.message}`, error.stack);
     console.log("JIRA API HANDLER: --- END (Error: Unhandled Exception) ---");
     return NextResponse.json(
         {
-            error: `Failed to retrieve Jira issues for ${userEmail}: ${error.message}. Ensure Jira credentials and instance URL are correct and the user email is valid in Jira. Check server logs for call stack.`,
+            error: `Failed to retrieve Jira issues for userEmail="${userEmail}": ${error.message}. Ensure Jira credentials and instance URL are correct and the user email is valid in Jira. Check server logs for call stack.`,
             details: error.toString()
         },
         { status: 500 }
     );
   }
 }
+
+    
