@@ -24,3 +24,14 @@ export interface Task {
   // Source could be added if needed for more context in task batching
   // source?: 'Jira' | 'Git' | 'Calendar' | 'Slack' | 'Teams' | 'Other';
 }
+
+export interface MicrosoftGraphLicense {
+  skuId: string;
+  disabledPlans: string[];
+}
+export interface MicrosoftGraphUser {
+  id: string;
+  displayName: string | null;
+  userPrincipalName: string;
+  assignedLicenses: MicrosoftGraphLicense[];
+}

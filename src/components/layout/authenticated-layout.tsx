@@ -1,3 +1,4 @@
+
 "use client";
 
 import { AppSidebar } from "@/components/layout/app-sidebar";
@@ -12,6 +13,7 @@ const pageTitles: { [key: string]: string } = {
   "/dashboard": "Dashboard",
   "/team-overview": "Team Overview",
   "/task-batching": "Task Batching Suggestions",
+  "/integrations/microsoft-graph": "Microsoft Graph Users",
   "/settings": "Settings",
 };
 

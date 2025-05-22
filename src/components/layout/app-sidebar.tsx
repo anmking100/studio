@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -14,7 +15,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
-import { LayoutDashboard, Users, ListChecks, Settings, LogOut, ExternalLink } from "lucide-react";
+import { LayoutDashboard, Users, ListChecks, Settings, LogOut, ExternalLink, Briefcase } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useRouter } from "next/navigation";
@@ -24,6 +25,12 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/team-overview", label: "Team Overview", icon: Users },
   { href: "/task-batching", label: "Task Batching", icon: ListChecks },
+  { 
+    href: "/integrations/microsoft-graph", 
+    label: "MS Graph Users", 
+    icon: Briefcase,
+    group: "Integrations" 
+  },
 ];
 
 export function AppSidebar() {
@@ -51,7 +58,7 @@ export function AppSidebar() {
         </SidebarHeader>
         <SidebarContent className="p-2">
           <SidebarMenu>
-            {[...Array(3)].map((_, i) => (
+            {[...Array(navItems.length)].map((_, i) => (
               <SidebarMenuItem key={i}>
                 <SidebarMenuSkeleton showIcon={true} />
               </SidebarMenuItem>
