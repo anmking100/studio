@@ -7,7 +7,7 @@ import { AnomalyAlert } from "@/components/dashboard/anomaly-alert";
 import { mockFragmentationScores } from "@/lib/mock-data"; // Keep for trends chart and previous score
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Lightbulb, CheckSquare, Loader2, AlertTriangle, Info } from "lucide-react";
+import { Lightbulb, CheckSquare, Loader2, AlertTriangle, Info, UserCheck } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import Image from "next/image";
 import { useEffect, useState } from "react";
@@ -24,6 +24,7 @@ export default function DashboardPage() {
   const [currentFragmentationData, setCurrentFragmentationData] = useState<CalculateFragmentationScoreOutput | null>(null);
   const [isLoadingScore, setIsLoadingScore] = useState(true);
   const [scoreError, setScoreError] = useState<string | null>(null);
+  const [isHrUser, setIsHrUser] = useState(false);
 
   useEffect(() => {
     const productivityTips = [
@@ -35,9 +36,17 @@ export default function DashboardPage() {
     ];
     setRandomTip(productivityTips[Math.floor(Math.random() * productivityTips.length)]);
 
-    const fetchScore = async () => {
-      if (!user) return;
+    if (!user) return;
 
+    if (user.role === 'hr') {
+      setIsHrUser(true);
+      setIsLoadingScore(false);
+      setCurrentFragmentationData(null); // Ensure no score data is shown for HR
+      return;
+    }
+    setIsHrUser(false);
+
+    const fetchScore = async () => {
       setIsLoadingScore(true);
       setScoreError(null);
 
@@ -84,7 +93,7 @@ export default function DashboardPage() {
                 Welcome back, {user?.name?.split(" ")[0] || "User"}!
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Here's your personalized focus overview.
+                {isHrUser ? "Manage your team's focus overview." : "Here's your personalized focus overview."}
               </CardDescription>
             </div>
             <Image 
@@ -99,43 +108,55 @@ export default function DashboardPage() {
         </CardHeader>
       </Card>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-1">
-          {isLoadingScore && (
-            <Card className="shadow-lg flex items-center justify-center min-h-[200px]">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <p className="ml-2 text-muted-foreground">Calculating score...</p>
-            </Card>
-          )}
-          {scoreError && !isLoadingScore && (
-            <Alert variant="destructive" className="shadow-lg min-h-[200px]">
-              <AlertTriangle className="h-5 w-5" />
-              <AlertTitle>Score Error</AlertTitle>
-              <AlertDescription>{scoreError}</AlertDescription>
-            </Alert>
-          )}
-          {!isLoadingScore && !scoreError && currentFragmentationData && (
-            <FragmentationScoreCard 
-              currentScore={currentFragmentationData.fragmentationScore} 
-              previousScore={previousScore}
-              riskLevel={currentFragmentationData.riskLevel}
-              summary={currentFragmentationData.summary}
-            />
-          )}
-           {!isLoadingScore && !scoreError && !currentFragmentationData && (
-             <Card className="shadow-lg flex flex-col items-center justify-center min-h-[200px] text-center p-4">
-                <Info className="h-8 w-8 text-muted-foreground mb-2" />
-                <CardTitle className="text-lg">Fragmentation Score</CardTitle>
-                <CardDescription className="text-sm text-muted-foreground">Could not load fragmentation score data.</CardDescription>
-            </Card>
-           )}
+      {!isHrUser && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-1">
+            {isLoadingScore && (
+              <Card className="shadow-lg flex items-center justify-center min-h-[200px]">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="ml-2 text-muted-foreground">Calculating score...</p>
+              </Card>
+            )}
+            {scoreError && !isLoadingScore && (
+              <Alert variant="destructive" className="shadow-lg min-h-[200px]">
+                <AlertTriangle className="h-5 w-5" />
+                <AlertTitle>Score Error</AlertTitle>
+                <AlertDescription>{scoreError}</AlertDescription>
+              </Alert>
+            )}
+            {!isLoadingScore && !scoreError && currentFragmentationData && (
+              <FragmentationScoreCard 
+                currentScore={currentFragmentationData.fragmentationScore} 
+                previousScore={previousScore}
+                riskLevel={currentFragmentationData.riskLevel}
+                summary={currentFragmentationData.summary}
+              />
+            )}
+             {!isLoadingScore && !scoreError && !currentFragmentationData && !isHrUser && (
+               <Card className="shadow-lg flex flex-col items-center justify-center min-h-[200px] text-center p-4">
+                  <Info className="h-8 w-8 text-muted-foreground mb-2" />
+                  <CardTitle className="text-lg">Fragmentation Score</CardTitle>
+                  <CardDescription className="text-sm text-muted-foreground">Could not load fragmentation score data.</CardDescription>
+              </Card>
+             )}
+          </div>
+          <div className="lg:col-span-2">
+            <AnomalyAlert fragmentationScores={recentFragmentationScores} />
+          </div>
         </div>
-        <div className="lg:col-span-2">
-          <AnomalyAlert fragmentationScores={recentFragmentationScores} />
-        </div>
-      </div>
+      )}
       
-      {currentFragmentationData && !isLoadingScore && !scoreError && (
+      {isHrUser && (
+        <Alert variant="default" className="border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400 shadow-sm">
+            <UserCheck className="h-5 w-5 text-blue-600 dark:text-blue-500" />
+            <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">HR Dashboard View</AlertTitle>
+            <AlertDescription className="text-blue-600 dark:text-blue-500">
+                Your personal fragmentation score is not displayed here. Please use the "Team Overview" page to view and manage team member focus data.
+            </AlertDescription>
+        </Alert>
+      )}
+
+      {!isHrUser && currentFragmentationData && !isLoadingScore && !scoreError && (
         <Card className="shadow-md hover:shadow-lg transition-shadow duration-300">
           <CardHeader>
             <CardTitle className="text-xl font-semibold">AI Focus Summary</CardTitle>
@@ -153,8 +174,7 @@ export default function DashboardPage() {
         </Card>
       )}
 
-
-      <FocusTrendsChart data={recentFragmentationScores} />
+      {!isHrUser && <FocusTrendsChart data={recentFragmentationScores} />}
       
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <Card className="shadow-md hover:shadow-lg transition-shadow duration-300">
@@ -179,7 +199,8 @@ export default function DashboardPage() {
             <p className="text-muted-foreground">What would you like to do?</p>
             <ul className="list-disc list-inside text-primary space-y-1">
                 <li><a href="/task-batching" className="hover:underline">Suggest task batching</a></li>
-                <li><a href="#" className="hover:underline opacity-50 cursor-not-allowed">Log focused work session (soon)</a></li>
+                {!isHrUser && <li><a href="#" className="hover:underline opacity-50 cursor-not-allowed">Log focused work session (soon)</a></li>}
+                {isHrUser && <li><a href="/team-overview" className="hover:underline">View Team Overview</a></li>}
                 <li><a href="#" className="hover:underline opacity-50 cursor-not-allowed">Review daily goals (soon)</a></li>
             </ul>
           </CardContent>
@@ -188,3 +209,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+
