@@ -27,10 +27,45 @@ export function MemberHistoricalChart({ historicalData }: MemberHistoricalChartP
   const chartData = useMemo(() => {
     if (!historicalData || historicalData.length === 0) return [];
     return historicalData.map(item => ({
-      date: format(parseISO(item.date), 'MMM d'), // Format date for X-axis
+      date: format(parseISO(item.date), 'MMM d'), 
       score: item.score,
-    })).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // Ensure sorted by date
+    })).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); 
   }, [historicalData]);
+
+  const yAxisDomain = useMemo(() => {
+    if (!chartData || chartData.length === 0) return [0, 5]; // Default if no data
+    const scores = chartData.map(d => d.score);
+    let minScore = Math.min(...scores);
+    let maxScore = Math.max(...scores);
+
+    if (minScore === maxScore) { 
+        minScore = Math.max(0, minScore - 0.5);
+        maxScore = Math.min(5, maxScore + 0.5);
+        if (minScore === maxScore) { // If score is 0 or 5 and still min=max
+          minScore = Math.max(0, minScore - 0.5); // e.g. score is 0, domain [0, 0.5]
+          maxScore = minScore + 1; // e.g. score is 0, domain [0,1]
+        }
+    } else {
+        minScore = Math.max(0, minScore - 0.2); 
+        maxScore = Math.min(5, maxScore + 0.2);
+    }
+    
+    // Ensure a minimum visible range, e.g., at least 1 unit on Y-axis if possible
+    if (maxScore - minScore < 1) {
+        const mid = (maxScore + minScore) / 2;
+        minScore = Math.max(0, mid - 0.5);
+        maxScore = Math.min(5, mid + 0.5);
+         if (maxScore - minScore < 0.1) { // if still too small (e.g. centered on 0 or 5)
+            maxScore = minScore + 0.5; // ensure some visible range
+        }
+    }
+     // Final check to ensure min isn't greater than max
+    if (minScore > maxScore - 0.1) minScore = Math.max(0, maxScore - 0.5);
+
+
+    return [Math.max(0,minScore), Math.min(5,maxScore)];
+  }, [chartData]);
+
 
   if (!chartData || chartData.length === 0) {
     return <div className="text-center text-xs text-muted-foreground py-4">No historical trend data to display.</div>;
@@ -44,7 +79,7 @@ export function MemberHistoricalChart({ historicalData }: MemberHistoricalChartP
           margin={{
             top: 5,
             right: 10,
-            left: -20, // Adjust to bring Y-axis labels closer
+            left: -20, 
             bottom: 0,
           }}
         >
@@ -54,18 +89,18 @@ export function MemberHistoricalChart({ historicalData }: MemberHistoricalChartP
             tickLine={false}
             axisLine={false}
             tickMargin={5}
-            tickFormatter={(value) => value} // Already formatted 'MMM d'
-            interval={Math.max(0, Math.floor(chartData.length / 4) -1)} // Show fewer ticks if many data points
+            tickFormatter={(value) => value} 
+            interval={chartData.length <= 5 ? 0 : "auto"}
             style={{ fontSize: '10px' }}
           />
           <YAxis
             tickLine={false}
             axisLine={false}
             tickMargin={5}
-            domain={[0, 5]} // Scores are 0-5
-            ticks={[0, 1, 2, 3, 4, 5]}
-            tickFormatter={(value) => value.toFixed(0)}
+            domain={yAxisDomain}
+            tickFormatter={(value) => typeof value === 'number' ? value.toFixed(1) : value}
             style={{ fontSize: '10px' }}
+            allowDataOverflow={false}
           />
           <ChartTooltip
             cursor={true}
@@ -100,3 +135,4 @@ export function MemberHistoricalChart({ historicalData }: MemberHistoricalChartP
     </ChartContainer>
   );
 }
+
