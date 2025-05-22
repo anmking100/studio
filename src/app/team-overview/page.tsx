@@ -3,18 +3,16 @@
 
 import { useEffect, useState } from "react";
 import { TeamMemberCard } from "@/components/team-overview/team-member-card";
-import { mockTeamData as initialMockTeamData } from "@/lib/mock-data";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Users, BarChart3, ShieldAlert, Loader2 } from "lucide-react";
+import { Users, BarChart3, ShieldAlert, Loader2, AlertTriangle } from "lucide-react";
 import Image from "next/image";
 import { 
   calculateFragmentationScore, 
-  type CalculateFragmentationScoreInput,
-  type CalculateFragmentationScoreOutput 
+  type CalculateFragmentationScoreInput
 } from "@/ai/flows/calculate-fragmentation-score";
-import type { TeamMemberFocus, GenericActivityItem } from "@/lib/types";
+import type { TeamMemberFocus, GenericActivityItem, MicrosoftGraphUser } from "@/lib/types";
 
 // Mock activities - in a real app, this would be fetched from backend integrations per user
 const getMockActivitiesForUser = (userId: string): GenericActivityItem[] => [
@@ -28,22 +26,65 @@ const getMockActivitiesForUser = (userId: string): GenericActivityItem[] => [
 export default function TeamOverviewPage() {
   const { user } = useAuth();
   const isHR = user?.role === 'hr';
-  const [teamData, setTeamData] = useState<TeamMemberFocus[]>(
-    initialMockTeamData.map(member => ({ ...member, isLoadingScore: isHR, scoreError: null }))
-  );
-  const [isCalculatingAll, setIsCalculatingAll] = useState(isHR);
+  const [teamData, setTeamData] = useState<TeamMemberFocus[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(isHR); // True if HR, to trigger user fetching
+  const [userFetchError, setUserFetchError] = useState<string | null>(null);
+  const [isCalculatingScores, setIsCalculatingScores] = useState(false);
 
 
   useEffect(() => {
     if (isHR) {
-      setIsCalculatingAll(true);
-      const fetchScoresForAllMembers = async () => {
-        const updatedTeamDataPromises = initialMockTeamData.map(async (member) => {
+      const fetchGraphUsers = async () => {
+        setIsLoadingUsers(true);
+        setUserFetchError(null);
+        try {
+          const response = await fetch("/api/microsoft-graph/users");
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `Failed to fetch MS Graph users: ${response.statusText}`);
+          }
+          const msUsers: MicrosoftGraphUser[] = await response.json();
+          
+          const initialTeamData: TeamMemberFocus[] = msUsers.map(msUser => ({
+            id: msUser.id,
+            name: msUser.displayName || msUser.userPrincipalName,
+            email: msUser.userPrincipalName,
+            role: 'developer', // Default role for MS Graph users in this context
+            fragmentationScore: 0, // Placeholder, will be calculated
+            lastWeekTrend: 0, // Placeholder
+            overloadStatus: 'Stable', // Placeholder
+            avatarUrl: `https://placehold.co/100x100.png?text=${(msUser.displayName || msUser.userPrincipalName)?.[0]?.toUpperCase() || 'U'}`, // Basic avatar
+            isLoadingScore: true,
+            scoreError: null,
+          }));
+          setTeamData(initialTeamData);
+          setIsLoadingUsers(false);
+          // Trigger score calculation after users are fetched
+          if (initialTeamData.length > 0) {
+            setIsCalculatingScores(true); 
+          }
+        } catch (err: any) {
+          console.error("Error fetching MS Graph users:", err);
+          setUserFetchError(err.message || "An unknown error occurred while fetching users.");
+          setIsLoadingUsers(false);
+        }
+      };
+      fetchGraphUsers();
+    }
+  }, [isHR]);
+
+  useEffect(() => {
+    if (isHR && isCalculatingScores && teamData.length > 0 && teamData.some(m => m.isLoadingScore)) {
+      const calculateScoresForAllMembers = async () => {
+        const updatedTeamDataPromises = teamData.map(async (member) => {
+          // If score is already calculated or there was an error, skip
+          if (!member.isLoadingScore || member.scoreError) return member;
+
           try {
             const activities = getMockActivitiesForUser(member.id);
             const input: CalculateFragmentationScoreInput = {
               userId: member.id,
-              activityWindowDays: 7, // Example window
+              activityWindowDays: 7,
               activities: activities,
             };
             const result = await calculateFragmentationScore(input);
@@ -67,17 +108,22 @@ export default function TeamOverviewPage() {
 
         const settledTeamData = await Promise.all(updatedTeamDataPromises);
         setTeamData(settledTeamData);
-        setIsCalculatingAll(false);
+        // Check if all scores are done
+        if (settledTeamData.every(m => !m.isLoadingScore)) {
+            setIsCalculatingScores(false);
+        }
       };
 
-      fetchScoresForAllMembers();
+      calculateScoresForAllMembers();
     }
-  }, [isHR]);
+  }, [isHR, teamData, isCalculatingScores]);
   
   const teamStats = teamData.reduce((acc, member) => {
+    if (member.isLoadingScore || member.scoreError) return acc; // Don't count loading/error states in stats
+
     const status = member.aiRiskLevel ? 
                    (member.aiRiskLevel === 'Low' ? 'Stable' : member.aiRiskLevel === 'Moderate' ? 'At Risk' : 'Overloaded') 
-                   : member.overloadStatus;
+                   : 'Stable'; // Default if no AI risk level
     if (status === "Stable") acc.stable++;
     else if (status === "At Risk") acc.atRisk++;
     else if (status === "Overloaded") acc.overloaded++;
@@ -113,17 +159,34 @@ export default function TeamOverviewPage() {
           <ShieldAlert className="h-5 w-5 text-accent" />
           <AlertTitle className="font-semibold text-accent">Privacy Notice</AlertTitle>
           <AlertDescription>
-            To protect individual privacy, detailed fragmentation scores are only visible to HR personnel. You are seeing an anonymized overview.
+            To protect individual privacy, detailed fragmentation scores are only visible to HR personnel. You are seeing an anonymized overview based on general roles.
           </AlertDescription>
         </Alert>
       )}
 
-      {isHR && isCalculatingAll && (
+      {isHR && isLoadingUsers && (
+         <Alert variant="default" className="shadow-md border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400">
+          <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-500" />
+          <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Fetching Team Members</AlertTitle>
+          <AlertDescription className="text-blue-600 dark:text-blue-500">
+            Loading user data from Microsoft Graph...
+          </AlertDescription>
+        </Alert>
+      )}
+      {isHR && userFetchError && (
+        <Alert variant="destructive" className="shadow-md">
+          <AlertTriangle className="h-5 w-5" />
+          <AlertTitle>Error Fetching Users</AlertTitle>
+          <AlertDescription>{userFetchError} Please ensure Microsoft Graph API is configured correctly in .env and the service is running.</AlertDescription>
+        </Alert>
+      )}
+
+      {isHR && !isLoadingUsers && !userFetchError && isCalculatingScores && (
         <Alert variant="default" className="shadow-md border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-500" />
           <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Calculating Scores</AlertTitle>
           <AlertDescription className="text-blue-600 dark:text-blue-500">
-            The AI is currently calculating fragmentation scores for all team members. This may take a moment...
+            The AI is currently calculating fragmentation scores for team members. This may take a moment...
           </AlertDescription>
         </Alert>
       )}
@@ -168,10 +231,19 @@ export default function TeamOverviewPage() {
             <BarChart3 className="h-6 w-6 text-primary" />
           </div>
           <CardDescription>
-            {isHR ? "Detailed view of each team member's AI-calculated focus status." : "Overview of team member stability."}
+            {isHR ? "Detailed view of each team member's AI-calculated focus status from Microsoft Graph." : "Overview of team member stability."}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {isHR && !isLoadingUsers && !userFetchError && teamData.length === 0 && (
+             <Alert className="col-span-full">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>No Users Found in Microsoft Graph</AlertTitle>
+              <AlertDescription>
+                No users were returned from the Microsoft Graph API. Check your configuration and ensure there are users in your tenant.
+              </AlertDescription>
+            </Alert>
+          )}
           {teamData.map((member) => (
             <TeamMemberCard key={member.id} member={member} showDetailedScore={isHR} />
           ))}
@@ -180,3 +252,5 @@ export default function TeamOverviewPage() {
     </div>
   );
 }
+
+    
