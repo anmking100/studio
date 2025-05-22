@@ -6,7 +6,7 @@ import { TeamMemberCard } from "@/components/team-overview/team-member-card";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Users, BarChart3, ShieldAlert, Loader2, AlertTriangle } from "lucide-react";
+import { Users, BarChart3, ShieldAlert, Loader2, AlertTriangle, ShieldCheck } from "lucide-react"; // Added ShieldCheck
 import Image from "next/image";
 import { 
   calculateFragmentationScore, 
@@ -45,8 +45,18 @@ export default function TeamOverviewPage() {
           }
           const msUsers: MicrosoftGraphUser[] = await response.json();
           
-          const initialTeamData: TeamMemberFocus[] = msUsers.map(msUser => ({
-            id: msUser.id,
+          const validMsUsers = msUsers.filter(msUser => {
+            if (!msUser.id) {
+              console.warn(
+                `Microsoft Graph user data missing ID. User Principal Name: ${msUser.userPrincipalName || 'N/A'}. This user will be skipped.`
+              );
+              return false;
+            }
+            return true;
+          });
+
+          const initialTeamData: TeamMemberFocus[] = validMsUsers.map(msUser => ({
+            id: msUser.id, // Now guaranteed to be present
             name: msUser.displayName || msUser.userPrincipalName,
             email: msUser.userPrincipalName,
             // For simplicity, assign a default role. In a real app, this might come from MS Graph groups or another source.
@@ -98,14 +108,14 @@ export default function TeamOverviewPage() {
               scoreError: null,
             };
           } catch (err) {
-            console.error(`Error calculating score for ${member.name} (ID: ${member.id}):`, err);
-            const errorMessage = err instanceof Error ? err.message : "Failed to calculate score due to an unknown error.";
+            const errorMessage = err instanceof Error ? err.message : `Failed to calculate score for ${member.name}.`;
+            console.error(`Error calculating score for ${member.name} (ID: ${member.id}):`, errorMessage, err);
             return {
               ...member,
               isLoadingScore: false,
               scoreError: errorMessage,
               aiSummary: `Error: ${errorMessage}`, // Provide error in summary for visibility
-              aiRiskLevel: "High", // Default to high risk on error
+              aiRiskLevel: "High" as "Low" | "Moderate" | "High", // Default to high risk on error
             };
           }
         });
@@ -122,11 +132,9 @@ export default function TeamOverviewPage() {
   }, [isHR, teamData, isCalculatingScores]);
   
   const teamStats = teamData.reduce((acc, member) => {
-    if (member.isLoadingScore || member.scoreError) return acc;
+    if (member.isLoadingScore || member.scoreError || !member.aiRiskLevel) return acc;
 
-    const status = member.aiRiskLevel ? 
-                   (member.aiRiskLevel === 'Low' ? 'Stable' : member.aiRiskLevel === 'Moderate' ? 'At Risk' : 'Overloaded') 
-                   : 'Stable'; 
+    const status = member.aiRiskLevel === 'Low' ? 'Stable' : member.aiRiskLevel === 'Moderate' ? 'At Risk' : 'Overloaded'; 
     if (status === "Stable") acc.stable++;
     else if (status === "At Risk") acc.atRisk++;
     else if (status === "Overloaded") acc.overloaded++;
@@ -254,7 +262,7 @@ export default function TeamOverviewPage() {
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>No Users Found in Microsoft Graph</AlertTitle>
               <AlertDescription>
-                No users were returned from the Microsoft Graph API. Check your configuration and ensure there are users in your tenant.
+                No users were returned from the Microsoft Graph API. Check your configuration and ensure there are users in your tenant, or that the users have an 'id' field.
               </AlertDescription>
             </Alert>
           )}
@@ -275,3 +283,4 @@ export default function TeamOverviewPage() {
     </div>
   );
 }
+
