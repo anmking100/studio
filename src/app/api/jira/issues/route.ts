@@ -79,6 +79,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: "Invalid date format for startDate or endDate. Please use ISO string." }, { status: 400 });
     }
   } else {
+    // This default range is less likely to be used now that TeamOverviewPage specifies ranges.
     const sevenDaysAgo = format(subDays(startOfDay(new Date()), 7), "yyyy-MM-dd HH:mm");
     const now = format(new Date(), "yyyy-MM-dd HH:mm");
     jql += ` AND updated >= "${sevenDaysAgo}" AND updated <= "${now}"`;
@@ -102,42 +103,57 @@ export async function GET(request: NextRequest) {
       cache: 'no-store',
     });
 
-    console.log(`JIRA API: Response status for userEmail="${userEmail}" (period starting ${startDateParam}): ${response.status}`);
+    console.log(`JIRA API: Response status for userEmail="${userEmail}" (period starting ${startDateParam || 'N/A'}): ${response.status}`);
+
+    const responseText = await response.text(); // Get raw text first
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`JIRA API Error: Jira API request failed for userEmail="${userEmail}". Status: ${response.status}, StatusText: ${response.statusText}. Body: ${errorText.substring(0, 500)}`);
+      console.error(`JIRA API Error: Jira API request failed for userEmail="${userEmail}". Status: ${response.status}, StatusText: ${response.statusText}.`);
+      console.error(`JIRA API Error: Response Body Snippet: ${responseText.substring(0, 500)}`);
       console.log(`JIRA API HANDLER: --- END (Error: API Request Failed ${response.status}) ---`);
       return NextResponse.json(
         {
           error: `Jira API request failed with status ${response.status}. Check server logs for details. Ensure Jira URL, credentials, and user email validity.`,
-          details: `Jira responded with: ${errorText.substring(0, 200)}`,
+          details: `Jira responded with: ${responseText.substring(0, 200)}`,
         },
         { status: response.status }
       );
     }
+    
+    console.log(`JIRA API: Raw response text snippet for userEmail="${userEmail}": ${responseText.substring(0, 1000)}...`);
 
-    const data = await response.json();
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError: any) {
+      console.error(`JIRA API Error: Failed to parse JSON response for userEmail="${userEmail}". Error: ${parseError.message}`);
+      console.error(`JIRA API Error: Full raw response text that failed to parse for userEmail="${userEmail}":`, responseText);
+      console.log("JIRA API HANDLER: --- END (Error: JSON Parse Failed) ---");
+      return NextResponse.json(
+        { error: "Failed to parse response from Jira API. Response was not valid JSON.", details: responseText.substring(0, 200) },
+        { status: 502 } // Bad Gateway - upstream response was bad
+      );
+    }
+
     const issues: JiraIssue[] = data.issues || [];
-    console.log(`JIRA API: Raw issues fetched from Jira API for userEmail="${userEmail}": ${issues.length}`);
-
+    console.log(`JIRA API: Raw issues array length after JSON parse for userEmail="${userEmail}": ${issues.length}`);
 
     if (issues.length > 0) {
-        console.log(`JIRA API: SUCCESS - Found ${issues.length} Jira raw issues for userEmail="${userEmail}" for period starting ${startDateParam}.`);
-        console.log(`JIRA API: Sample raw issue for userEmail="${userEmail}": Key - ${issues[0].key}, Summary - "${issues[0].fields.summary}", Updated - ${issues[0].fields.updated}`);
+        console.log(`JIRA API: SUCCESS - Found ${issues.length} Jira raw issues in parsed data for userEmail="${userEmail}" for period starting ${startDateParam || 'N/A'}.`);
+        console.log(`JIRA API: Full first raw issue object for userEmail="${userEmail}": ${JSON.stringify(issues[0], null, 2)}`);
     } else {
-        console.log(`JIRA API: INFO - Successfully connected to Jira for userEmail="${userEmail}", but NO Jira issues found for the JQL query: ${jql}`);
+        console.log(`JIRA API: INFO - Successfully connected to Jira for userEmail="${userEmail}", but NO 'issues' array in parsed data or array is empty for JQL query: ${jql}`);
     }
 
     const activities: GenericActivityItem[] = issues.map(mapJiraIssueToActivity);
     console.log(`JIRA API: Mapped ${activities.length} raw issues to GenericActivityItem format for userEmail="${userEmail}".`);
     if (activities.length > 0) {
         console.log(`JIRA API: Sample mapped activity type for userEmail="${userEmail}": ${activities[0].type}, details: "${activities[0].details}"`);
-    } else if (issues.length > 0 && activities.length === 0) { // This case should ideally not happen if mapping is correct
+    } else if (issues.length > 0 && activities.length === 0) { 
         console.warn(`JIRA API: Found ${issues.length} raw issues but mapped 0 activities for userEmail="${userEmail}". Check mapJiraIssueToActivity logic or issue structure if this occurs.`);
     }
 
-    console.log("JIRA API HANDLER: --- END (Success) ---");
+    console.log("JIRA API HANDLER: --- END (Success or No Issues Found) ---");
     return NextResponse.json(activities);
 
   } catch (error: any) {
@@ -152,5 +168,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-
-    
