@@ -15,7 +15,8 @@ const pageTitles: { [key: string]: string } = {
   "/task-batching": "Task Batching Suggestions",
   "/integrations/microsoft-graph": "Microsoft Graph Users",
   "/integrations/teams": "Microsoft Teams Integration",
-  "/integrations/jira": "Jira Integration",
+  "/integrations/jira": "Jira Users",
+  "/integrations/jira/all-issues": "Jira Raw Issues Viewer",
   "/settings": "Settings",
 };
 
@@ -39,8 +40,7 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
   }
 
   if (!user) {
-    // This case should ideally be handled by the redirect, but as a fallback:
-    return null; 
+    return null;
   }
 
   const currentPageTitle = pageTitles[pathname] || "FocusFlow";

@@ -18,16 +18,14 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
-import { LayoutDashboard, Users, ListChecks, Settings, LogOut, ExternalLink, Briefcase, Cog } from "lucide-react"; // Added Cog
+import { LayoutDashboard, Users, ListChecks, Settings, LogOut, ExternalLink, Briefcase, Cog, FileJson } from "lucide-react"; // Added FileJson
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Package } from "lucide-react"; // Example icon for Teams
-import { Atlassian } from "lucide-react"; // Example icon for Jira, if available, else use generic
+import { Package } from "lucide-react";
 
-// Helper to create a generic icon if specific one isn't in lucide
-const JiraIcon = () => (
+const JiraIconSvg = () => (
   <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor">
     <path d="M12.296 2.017L2.078 6.075a.302.302 0 00-.197.355l4.08 13.536a.301.301 0 00.353.198l10.22-4.057a.302.302 0 00.197-.355L12.647 2.215a.304.304 0 00-.35-.198zm-.39 1.408l8.315 3.3-3.29 10.92-8.313-3.3zm-1.02 8.13l-2.057-.816 1.24-4.122 2.056.816z"></path>
   </svg>
@@ -38,23 +36,29 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, group: "Main" },
   { href: "/team-overview", label: "Team Overview", icon: Users, group: "Main" },
   { href: "/task-batching", label: "Task Batching", icon: ListChecks, group: "Main" },
-  { 
-    href: "/integrations/microsoft-graph", 
-    label: "MS Graph Users", 
+  {
+    href: "/integrations/microsoft-graph",
+    label: "MS Graph Users",
     icon: Briefcase,
-    group: "Integrations" 
+    group: "Integrations"
   },
-  { 
-    href: "/integrations/teams", 
-    label: "Teams", 
-    icon: Package, // Using Package as a placeholder for Teams icon
-    group: "Integrations" 
+  {
+    href: "/integrations/teams",
+    label: "Teams",
+    icon: Package,
+    group: "Integrations"
   },
-   { 
-    href: "/integrations/jira", 
-    label: "Jira", 
-    icon: JiraIcon,
-    group: "Integrations" 
+   {
+    href: "/integrations/jira",
+    label: "Jira Users",
+    icon: JiraIconSvg, // Using the SVG component
+    group: "Integrations"
+  },
+  {
+    href: "/integrations/jira/all-issues",
+    label: "Jira Raw Issues",
+    icon: FileJson,
+    group: "Integrations"
   },
 ];
 
@@ -74,7 +78,6 @@ export function AppSidebar() {
     router.push("/login");
   };
 
-  // Group navigation items
   const groupedNavItems = navItems.reduce((acc, item) => {
     const group = item.group || "Main";
     if (!acc[group]) {

@@ -9,22 +9,22 @@ export interface User {
   teamsUserId?: string;
 }
 
-export interface HistoricalScore {
-  date: string; // YYYY-MM-DD format
-  score: number; // This will now be the AVERAGE score for the day
-  riskLevel: 'Low' | 'Moderate' | 'High'; // Based on the average score
-  summary: string; // Summary for the day
-  activitiesCount: number; // Total activities for the day (sum of intervals)
-  intervalScoresCount?: number; // Number of 2-hour intervals that contributed to the average
-}
-
 export interface CalculateFragmentationScoreOutput {
   userId: string;
   fragmentationScore: number;
   summary: string;
   riskLevel: 'Low' | 'Moderate' | 'High';
-  activitiesCount: number; 
+  activitiesCount: number;
 }
+
+export interface HistoricalScore {
+  date: string; // YYYY-MM-DD format
+  score: number;
+  riskLevel: 'Low' | 'Moderate' | 'High';
+  summary: string;
+  activitiesCount: number;
+}
+
 
 export interface TeamMemberFocus {
   id: string;
@@ -33,15 +33,15 @@ export interface TeamMemberFocus {
   role: 'developer' | 'hr';
   avatarUrl?: string;
 
-  currentDayScoreData?: CalculateFragmentationScoreOutput | null; // This will store the average score for the selected end date
+  currentDayScoreData?: CalculateFragmentationScoreOutput | null;
 
-  historicalScores: HistoricalScore[]; // These will also store daily averages
-  averageHistoricalScore?: number | null; // Average of the daily average historical scores
+  historicalScores: HistoricalScore[];
+  averageHistoricalScore?: number | null;
 
   isLoadingScore: boolean;
   scoreError?: string | null;
-  activityError?: string | null; // Kept for broader activity fetching issues
-  isLoadingActivities?: boolean; // Might be true for a longer time now
+  activityError?: string | null;
+  isLoadingActivities?: boolean;
 }
 
 export interface Task {
@@ -60,11 +60,60 @@ export interface MicrosoftGraphUser {
   assignedLicenses: MicrosoftGraphLicense[];
 }
 
+// Definition for a raw Jira issue object
+export interface JiraIssue {
+  key: string;
+  id: string; // Usually the same as key for older issues, but good to have
+  self: string; // API link to the issue
+  fields: {
+    summary: string;
+    status: {
+      name: string;
+      statusCategory?: {
+        key?: string;
+        name?: string;
+      };
+    };
+    updated: string; // ISO 8601 datetime string
+    created: string; // ISO 8601 datetime string
+    issuetype: {
+      name: string;
+      iconUrl?: string;
+    };
+    priority?: {
+      name: string;
+      iconUrl?: string;
+    };
+    labels?: string[];
+    assignee?: {
+      displayName?: string;
+      emailAddress?: string;
+      accountId?: string;
+    } | null;
+    reporter?: {
+      displayName?: string;
+      emailAddress?: string;
+      accountId?: string;
+    };
+    project?: {
+      key?: string;
+      name?: string;
+    };
+    // Add any other fields you might want to inspect from the raw response
+    // For example:
+    // description?: any; // Can be complex Atlassian Document Format
+    // comments?: { comments: any[]; maxResults: number; total: number; startAt: number; };
+  };
+  // You can add more top-level fields if needed, e.g., changelog for history
+  // changelog?: { histories: any[] };
+}
+
+
 export interface JiraUser {
   accountId: string;
   displayName: string;
   emailAddress?: string;
-  avatarUrl?: string; 
+  avatarUrl?: string;
 }
 
 export interface GenericActivityItem {
@@ -77,15 +126,13 @@ export interface GenericActivityItem {
 
 export interface CalculateFragmentationScoreInputType {
   userId: string;
-  activityWindowDays: number; // This might be less relevant if we always calc for specific intervals
+  activityWindowDays: number;
   activities: GenericActivityItem[];
 }
 
-// For dashboard page - personal score display (less complex than team member)
 export interface FragmentationDataPoint {
   date: string; // YYYY-MM-DD
   score: number;
   summary?: string;
   riskLevel?: 'Low' | 'Moderate' | 'High';
 }
-
