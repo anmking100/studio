@@ -6,7 +6,7 @@ import { TeamMemberCard } from "@/components/team-overview/team-member-card";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Users, BarChart3, ShieldAlert, Loader2, AlertTriangle, ShieldCheck, CalendarIcon } from "lucide-react";
+import { Users, BarChart3, ShieldAlert, Loader2, AlertTriangle, ShieldCheck, CalendarDays } from "lucide-react";
 import Image from "next/image";
 import { calculateScoreAlgorithmically } from "@/lib/score-calculator";
 import type { TeamMemberFocus, GenericActivityItem, MicrosoftGraphUser, HistoricalScore, CalculateFragmentationScoreInputType, CalculateFragmentationScoreOutput } from "@/lib/types";
@@ -20,171 +20,6 @@ import { cn } from "@/lib/utils";
 const NUMBER_OF_HISTORICAL_DAYS_FOR_TREND = 5;
 const INTERVAL_HOURS = 2;
 
-// Helper to fetch activities for a specific interval and calculate score
-const fetchAndScoreIntervalData = useCallback(async (
-  memberId: string,
-  memberEmail: string | undefined,
-  intervalStart: Date,
-  intervalEnd: Date
-): Promise<CalculateFragmentationScoreOutput | { error: string; intervalDetails?: {start: string, end: string} } > => {
-  let intervalActivities: GenericActivityItem[] = [];
-  let activityFetchError: string | null = null;
-  const activityWindowDays = 1; // Score calculation is for this interval
-
-  const intervalStartISO = intervalStart.toISOString();
-  const intervalEndISO = intervalEnd.toISOString();
-
-  console.log(`TEAM OVERVIEW (Interval): Fetching activities for member ${memberId} (${memberEmail || 'No Email'}) for interval: ${intervalStartISO} to ${intervalEndISO}`);
-
-  if (memberEmail) {
-    try {
-      const jiraResponse = await fetch(`/api/jira/issues?userEmail=${encodeURIComponent(memberEmail)}&startDate=${encodeURIComponent(intervalStartISO)}&endDate=${encodeURIComponent(intervalEndISO)}`);
-      if (jiraResponse.ok) {
-        const jiraActivities: GenericActivityItem[] = await jiraResponse.json();
-        intervalActivities.push(...jiraActivities);
-      } else {
-        const errorData = await jiraResponse.json();
-        activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Jira (${format(intervalStart, 'HH:mm')}-${format(intervalEnd, 'HH:mm')}): ${errorData.error || jiraResponse.statusText}`;
-      }
-    } catch (e: any) {
-      activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Jira fetch error (${format(intervalStart, 'HH:mm')}): ${e.message}`;
-    }
-  }
-
-  try {
-    const teamsResponse = await fetch(`/api/teams/activity?userId=${encodeURIComponent(memberId)}&startDate=${encodeURIComponent(intervalStartISO)}&endDate=${encodeURIComponent(intervalEndISO)}`);
-    if (teamsResponse.ok) {
-      const teamsActivities: GenericActivityItem[] = await teamsResponse.json();
-      intervalActivities.push(...teamsActivities);
-    } else {
-      const errorData = await teamsResponse.json();
-      activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Teams (${format(intervalStart, 'HH:mm')}-${format(intervalEnd, 'HH:mm')}): ${errorData.error || teamsResponse.statusText}`;
-    }
-  } catch (e: any) {
-    activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Teams fetch error (${format(intervalStart, 'HH:mm')}): ${e.message}`;
-  }
-
-  if (activityFetchError) {
-    console.warn(`TEAM OVERVIEW (Interval): Activity fetch errors for ${memberId} for interval ${intervalStartISO} to ${intervalEndISO}: ${activityFetchError}`);
-  }
-
-  try {
-    const input: CalculateFragmentationScoreInputType = {
-      userId: memberId,
-      activityWindowDays,
-      activities: intervalActivities,
-    };
-    const result = calculateScoreAlgorithmically(input);
-    // Do not log full summary here as it's too verbose for interval
-    console.log(`TEAM OVERVIEW (Interval): Score for ${memberId} for ${intervalStartISO}-${intervalEndISO}: ${result.fragmentationScore}. Activities: ${result.activitiesCount}.`);
-    return activityFetchError ? { ...result, summary: `Note: Some activity data for this interval might be missing. ${activityFetchError}. ${result.summary}` } : result;
-  } catch (scoreErr: any) {
-    const scoreErrorMessage = `Algorithmic score calc error for interval ${format(intervalStart, 'HH:mm')}-${format(intervalEnd, 'HH:mm')}: ${scoreErr.message}`;
-    console.error(scoreErrorMessage, scoreErr);
-    return { error: activityFetchError ? `${activityFetchError}; ${scoreErrorMessage}` : scoreErrorMessage , intervalDetails: {start: intervalStartISO, end: intervalEndISO}};
-  }
-}, []);
-
-
-// Orchestrates calculating the average score for a full day (current or historical)
-const calculateAverageDailyScore = useCallback(async (
-  memberId: string,
-  memberEmail: string | undefined,
-  dayToProcess: Date,
-  isCurrentSelectedDay: boolean, // True if dayToProcess is the endDate of the user's selected range
-  currentSystemTime: Date // The actual current time, used if isCurrentSelectedDay and dayToProcess is today
-): Promise<CalculateFragmentationScoreOutput | { error: string }> => {
-  console.log(`TEAM OVERVIEW (DailyAvg): Calculating average score for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}. Is current selected day: ${isCurrentSelectedDay}`);
-  const intervalScores: number[] = [];
-  let totalActivitiesForDay = 0;
-  let errorsForDay: string[] = [];
-  let lastIntervalSummary = "No intervals processed.";
-
-  const dayStart = startOfDay(dayToProcess);
-
-  for (let hourOffset = 0; hourOffset < 24; hourOffset += INTERVAL_HOURS) {
-    let intervalStart = addHours(dayStart, hourOffset);
-    let intervalEnd = addHours(intervalStart, INTERVAL_HOURS);
-
-    if (isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTime))) {
-      // If processing today (as the selected end date), and this interval starts after current time, stop.
-      if (isBefore(currentSystemTime, intervalStart)) {
-        console.log(`TEAM OVERVIEW (DailyAvg): Interval ${format(intervalStart, 'HH:mm')} starts after current time ${format(currentSystemTime, 'HH:mm')}. Stopping for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
-        break;
-      }
-      // If interval extends beyond current time, cap it at current time.
-      if (isBefore(currentSystemTime, intervalEnd)) {
-        intervalEnd = currentSystemTime;
-        console.log(`TEAM OVERVIEW (DailyAvg): Capping interval end to current time ${format(intervalEnd, 'HH:mm')} for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
-      }
-    }
-    
-    // Ensure intervalEnd does not exceed the very end of dayToProcess if it's not today.
-    // Or if it is today, ensure it doesn't exceed currentSystemTime when isCurrentSelectedDay is true.
-    if (isBefore(endOfDay(dayToProcess), intervalEnd) && !(isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTime)))) {
-        intervalEnd = endOfDay(dayToProcess);
-    }
-
-
-    // If interval start is same or after interval end (can happen if current time is at very start of an interval for today)
-    if (!isBefore(intervalStart, intervalEnd)) {
-        console.log(`TEAM OVERVIEW (DailyAvg): Interval start ${format(intervalStart, 'HH:mm')} is not before end ${format(intervalEnd, 'HH:mm')}. Skipping for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
-        if (isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTime))) break; // Stop if it's today and we've caught up to current time.
-        continue;
-    }
-
-
-    const intervalResult = await fetchAndScoreIntervalData(memberId, memberEmail, intervalStart, intervalEnd);
-
-    if ('error' in intervalResult) {
-      errorsForDay.push(`Interval ${format(intervalStart, 'HH:mm')}-${format(intervalEnd, 'HH:mm')}: ${intervalResult.error}`);
-    } else {
-      intervalScores.push(intervalResult.fragmentationScore);
-      totalActivitiesForDay += intervalResult.activitiesCount;
-      lastIntervalSummary = intervalResult.summary; // Keep the last successful summary
-    }
-  }
-
-  if (errorsForDay.length > 0) {
-    console.warn(`TEAM OVERVIEW (DailyAvg): Errors for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}: ${errorsForDay.join('; ')}`);
-  }
-
-  if (intervalScores.length === 0) {
-    // If no intervals were successfully processed (e.g., all had errors, or it's too early in the day)
-    // Return a default low score or an error state
-    const baseSummary = `No scorable activity intervals found for ${format(dayToProcess, 'yyyy-MM-dd')}.`;
-    return {
-      userId: memberId,
-      fragmentationScore: 0.5, // Default for no data
-      summary: errorsForDay.length > 0 ? `${baseSummary} Errors: ${errorsForDay.join('; ')}` : baseSummary,
-      riskLevel: 'Low',
-      activitiesCount: 0,
-    };
-  }
-
-  const averageScore = parseFloat((intervalScores.reduce((a, b) => a + b, 0) / intervalScores.length).toFixed(1));
-  
-  let riskLevel: 'Low' | 'Moderate' | 'High';
-  if (averageScore >= 3.5) riskLevel = 'High';
-  else if (averageScore >= 2.0) riskLevel = 'Moderate';
-  else riskLevel = 'Low';
-
-  let dailySummary = `Daily average score of ${averageScore} (${riskLevel}) for ${format(dayToProcess, 'yyyy-MM-dd')} based on ${intervalScores.length} 2-hour interval(s). Total activities: ${totalActivitiesForDay}.`;
-  if (errorsForDay.length > 0) {
-    dailySummary += ` Some intervals had errors: ${errorsForDay.slice(0,1).join('; ')}...`; // Show first error
-  }
-
-
-  return {
-    userId: memberId,
-    fragmentationScore: averageScore,
-    summary: dailySummary,
-    riskLevel: riskLevel,
-    activitiesCount: totalActivitiesForDay,
-  };
-
-}, [fetchAndScoreIntervalData]);
-
 
 export default function TeamOverviewPage() {
   const { user } = useAuth();
@@ -197,10 +32,176 @@ export default function TeamOverviewPage() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
     const today = new Date();
     return {
-      from: startOfDay(subDays(today, 6)), // Ensure 'from' is start of day
-      to: today, // 'to' can be current time if today, or end of day if historical
+      from: startOfDay(subDays(today, 6)), 
+      to: today, 
     };
   });
+
+  // Helper to fetch activities for a specific interval and calculate score
+  const fetchAndScoreIntervalData = useCallback(async (
+    memberId: string,
+    memberEmail: string | undefined,
+    intervalStart: Date,
+    intervalEnd: Date
+  ): Promise<CalculateFragmentationScoreOutput | { error: string; intervalDetails?: {start: string, end: string} } > => {
+    let intervalActivities: GenericActivityItem[] = [];
+    let activityFetchError: string | null = null;
+    const activityWindowDays = 1; // Score calculation is for this interval
+
+    const intervalStartISO = intervalStart.toISOString();
+    const intervalEndISO = intervalEnd.toISOString();
+
+    console.log(`TEAM OVERVIEW (Interval): Fetching activities for member ${memberId} (${memberEmail || 'No Email'}) for interval: ${intervalStartISO} to ${intervalEndISO}`);
+
+    if (memberEmail) {
+      try {
+        const jiraResponse = await fetch(`/api/jira/issues?userEmail=${encodeURIComponent(memberEmail)}&startDate=${encodeURIComponent(intervalStartISO)}&endDate=${encodeURIComponent(intervalEndISO)}`);
+        if (jiraResponse.ok) {
+          const jiraActivities: GenericActivityItem[] = await jiraResponse.json();
+          intervalActivities.push(...jiraActivities);
+        } else {
+          const errorData = await jiraResponse.json();
+          activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Jira (${format(intervalStart, 'HH:mm')}-${format(intervalEnd, 'HH:mm')}): ${errorData.error || jiraResponse.statusText}`;
+        }
+      } catch (e: any) {
+        activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Jira fetch error (${format(intervalStart, 'HH:mm')}): ${e.message}`;
+      }
+    }
+
+    try {
+      const teamsResponse = await fetch(`/api/teams/activity?userId=${encodeURIComponent(memberId)}&startDate=${encodeURIComponent(intervalStartISO)}&endDate=${encodeURIComponent(intervalEndISO)}`);
+      if (teamsResponse.ok) {
+        const teamsActivities: GenericActivityItem[] = await teamsResponse.json();
+        intervalActivities.push(...teamsActivities);
+      } else {
+        const errorData = await teamsResponse.json();
+        activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Teams (${format(intervalStart, 'HH:mm')}-${format(intervalEnd, 'HH:mm')}): ${errorData.error || teamsResponse.statusText}`;
+      }
+    } catch (e: any) {
+      activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Teams fetch error (${format(intervalStart, 'HH:mm')}): ${e.message}`;
+    }
+
+    if (activityFetchError) {
+      console.warn(`TEAM OVERVIEW (Interval): Activity fetch errors for ${memberId} for interval ${intervalStartISO} to ${intervalEndISO}: ${activityFetchError}`);
+    }
+
+    try {
+      const input: CalculateFragmentationScoreInputType = {
+        userId: memberId,
+        activityWindowDays,
+        activities: intervalActivities,
+      };
+      const result = calculateScoreAlgorithmically(input);
+      // Do not log full summary here as it's too verbose for interval
+      console.log(`TEAM OVERVIEW (Interval): Score for ${memberId} for ${intervalStartISO}-${intervalEndISO}: ${result.fragmentationScore}. Activities: ${result.activitiesCount}.`);
+      return activityFetchError ? { ...result, summary: `Note: Some activity data for this interval might be missing. ${activityFetchError}. ${result.summary}` } : result;
+    } catch (scoreErr: any) {
+      const scoreErrorMessage = `Algorithmic score calc error for interval ${format(intervalStart, 'HH:mm')}-${format(intervalEnd, 'HH:mm')}: ${scoreErr.message}`;
+      console.error(scoreErrorMessage, scoreErr);
+      return { error: activityFetchError ? `${activityFetchError}; ${scoreErrorMessage}` : scoreErrorMessage , intervalDetails: {start: intervalStartISO, end: intervalEndISO}};
+    }
+  }, []); // Empty dependency array for useCallback if it doesn't depend on component state/props directly or uses stable refs/dispatchers
+
+
+  // Orchestrates calculating the average score for a full day (current or historical)
+  const calculateAverageDailyScore = useCallback(async (
+    memberId: string,
+    memberEmail: string | undefined,
+    dayToProcess: Date,
+    isCurrentSelectedDay: boolean, // True if dayToProcess is the endDate of the user's selected range
+    currentSystemTime: Date // The actual current time, used if isCurrentSelectedDay and dayToProcess is today
+  ): Promise<CalculateFragmentationScoreOutput | { error: string }> => {
+    console.log(`TEAM OVERVIEW (DailyAvg): Calculating average score for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}. Is current selected day: ${isCurrentSelectedDay}`);
+    const intervalScores: number[] = [];
+    let totalActivitiesForDay = 0;
+    let errorsForDay: string[] = [];
+    let lastIntervalSummary = "No intervals processed.";
+
+    const dayStart = startOfDay(dayToProcess);
+
+    for (let hourOffset = 0; hourOffset < 24; hourOffset += INTERVAL_HOURS) {
+      let intervalStart = addHours(dayStart, hourOffset);
+      let intervalEnd = addHours(intervalStart, INTERVAL_HOURS);
+
+      if (isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTime))) {
+        // If processing today (as the selected end date), and this interval starts after current time, stop.
+        if (isBefore(currentSystemTime, intervalStart)) {
+          console.log(`TEAM OVERVIEW (DailyAvg): Interval ${format(intervalStart, 'HH:mm')} starts after current time ${format(currentSystemTime, 'HH:mm')}. Stopping for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
+          break;
+        }
+        // If interval extends beyond current time, cap it at current time.
+        if (isBefore(currentSystemTime, intervalEnd)) {
+          intervalEnd = currentSystemTime;
+          console.log(`TEAM OVERVIEW (DailyAvg): Capping interval end to current time ${format(intervalEnd, 'HH:mm')} for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
+        }
+      }
+      
+      // Ensure intervalEnd does not exceed the very end of dayToProcess if it's not today.
+      // Or if it is today, ensure it doesn't exceed currentSystemTime when isCurrentSelectedDay is true.
+      if (isBefore(endOfDay(dayToProcess), intervalEnd) && !(isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTime)))) {
+          intervalEnd = endOfDay(dayToProcess);
+      }
+
+
+      // If interval start is same or after interval end (can happen if current time is at very start of an interval for today)
+      if (!isBefore(intervalStart, intervalEnd)) {
+          console.log(`TEAM OVERVIEW (DailyAvg): Interval start ${format(intervalStart, 'HH:mm')} is not before end ${format(intervalEnd, 'HH:mm')}. Skipping for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
+          if (isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTime))) break; // Stop if it's today and we've caught up to current time.
+          continue;
+      }
+
+
+      const intervalResult = await fetchAndScoreIntervalData(memberId, memberEmail, intervalStart, intervalEnd);
+
+      if ('error' in intervalResult) {
+        errorsForDay.push(`Interval ${format(intervalStart, 'HH:mm')}-${format(intervalEnd, 'HH:mm')}: ${intervalResult.error}`);
+      } else {
+        intervalScores.push(intervalResult.fragmentationScore);
+        totalActivitiesForDay += intervalResult.activitiesCount;
+        lastIntervalSummary = intervalResult.summary; // Keep the last successful summary
+      }
+    }
+
+    if (errorsForDay.length > 0) {
+      console.warn(`TEAM OVERVIEW (DailyAvg): Errors for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}: ${errorsForDay.join('; ')}`);
+    }
+
+    if (intervalScores.length === 0) {
+      // If no intervals were successfully processed (e.g., all had errors, or it's too early in the day)
+      // Return a default low score or an error state
+      const baseSummary = `No scorable activity intervals found for ${format(dayToProcess, 'yyyy-MM-dd')}.`;
+      return {
+        userId: memberId,
+        fragmentationScore: 0.5, // Default for no data
+        summary: errorsForDay.length > 0 ? `${baseSummary} Errors: ${errorsForDay.join('; ')}` : baseSummary,
+        riskLevel: 'Low',
+        activitiesCount: 0,
+      };
+    }
+
+    const averageScore = parseFloat((intervalScores.reduce((a, b) => a + b, 0) / intervalScores.length).toFixed(1));
+    
+    let riskLevel: 'Low' | 'Moderate' | 'High';
+    if (averageScore >= 3.5) riskLevel = 'High';
+    else if (averageScore >= 2.0) riskLevel = 'Moderate';
+    else riskLevel = 'Low';
+
+    let dailySummary = `Daily average score of ${averageScore} (${riskLevel}) for ${format(dayToProcess, 'yyyy-MM-dd')} based on ${intervalScores.length} ${INTERVAL_HOURS}-hour interval(s). Total activities: ${totalActivitiesForDay}.`;
+    if (errorsForDay.length > 0) {
+      dailySummary += ` Some intervals had errors: ${errorsForDay.slice(0,1).join('; ')}...`; // Show first error
+    }
+
+
+    return {
+      userId: memberId,
+      fragmentationScore: averageScore,
+      summary: dailySummary,
+      riskLevel: riskLevel,
+      activitiesCount: totalActivitiesForDay,
+    };
+
+  }, [fetchAndScoreIntervalData]); // fetchAndScoreIntervalData is now stable due to its own useCallback
+
 
   const processSingleMember = useCallback(async (
     memberInput: Omit<TeamMemberFocus, 'isLoadingScore' | 'scoreError' | 'currentDayScoreData' | 'historicalScores' | 'averageHistoricalScore' | 'activityError' | 'isLoadingActivities'>,
@@ -238,8 +239,9 @@ export default function TeamOverviewPage() {
         overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + errorMsg;
         console.warn(`TEAM OVERVIEW (Member): Error for ${memberInput.name} on ${format(historicalDateToProcess, 'yyyy-MM-dd')}: ${errorMsg}`);
       } else {
+        console.log(`TEAM OVERVIEW: Historical score for ${memberInput.name} on ${format(historicalDateToProcess, 'yyyy-MM-dd')}: Score=${historicalDayAvgResult.fragmentationScore}, Activities=${historicalDayAvgResult.activitiesCount || 'N/A (check result type)'}. Summary: ${historicalDayAvgResult.summary}`);
         historicalScoresData.push({
-          date: format(historicalDateToProcess, 'yyyy-MM-dd'),
+          date: format(startOfDay(historicalDateToProcess), 'yyyy-MM-dd'),
           score: historicalDayAvgResult.fragmentationScore,
           riskLevel: historicalDayAvgResult.riskLevel,
           summary: historicalDayAvgResult.summary,
@@ -268,7 +270,7 @@ export default function TeamOverviewPage() {
       scoreError: overallMemberError,
       activityError: overallMemberError,
     };
-  }, [calculateAverageDailyScore]);
+  }, [calculateAverageDailyScore]); // calculateAverageDailyScore is now stable
 
 
   const handleRetryMemberProcessing = useCallback(async (memberId: string) => {
@@ -290,12 +292,11 @@ export default function TeamOverviewPage() {
         ...baseMemberInfo
       } = memberToRetry;
       
-      // Determine effective end date for processing
       let effectiveRangeEnd = dateRange.to;
       if (!isEqual(startOfDay(dateRange.to), startOfDay(new Date()))) {
           effectiveRangeEnd = endOfDay(dateRange.to);
       } else {
-          effectiveRangeEnd = new Date(); // Use current time if end date of range is today
+          effectiveRangeEnd = new Date(); 
       }
 
       const updatedMember = await processSingleMember(baseMemberInfo, startOfDay(dateRange.from), effectiveRangeEnd, new Date());
@@ -318,11 +319,10 @@ export default function TeamOverviewPage() {
         setTeamData([]);
         setIsProcessingMembers(true);
         
-        const currentSystemTime = new Date(); // Capture current time once for consistency in this run
+        const currentSystemTime = new Date(); 
         const effectiveRangeFrom = startOfDay(dateRange.from);
-        let effectiveRangeTo = dateRange.to; // This is the date object for the selected end day
+        let effectiveRangeTo = dateRange.to; 
 
-        // Adjust effectiveRangeTo to be end of day if it's not today, or current time if it is today
         if (!isEqual(startOfDay(effectiveRangeTo), startOfDay(currentSystemTime))) {
             effectiveRangeTo = endOfDay(effectiveRangeTo);
         } else {
@@ -396,11 +396,9 @@ export default function TeamOverviewPage() {
 
   const handleStartDateSelect = (day: Date | undefined) => {
     if (!day) return;
-    const newFrom = startOfDay(day); // Ensure 'from' is always start of day
+    const newFrom = startOfDay(day);
     setDateRange(prev => {
         const currentTo = prev?.to || new Date();
-        // If newFrom is after currentTo, set currentTo to endOfDay(newFrom)
-        // Otherwise, keep currentTo, but ensure it's not before newFrom
         const newTo = isBefore(currentTo, newFrom) ? endOfDay(newFrom) : currentTo;
         return { from: newFrom, to: newTo };
     });
@@ -408,12 +406,9 @@ export default function TeamOverviewPage() {
 
   const handleEndDateSelect = (day: Date | undefined) => {
     if (!day) return;
-    // For 'to' date, if it's today, keep it as current time. If it's a past day, set to end of that day.
     const newTo = isEqual(startOfDay(day), startOfDay(new Date())) ? new Date() : endOfDay(day);
     setDateRange(prev => {
         const currentFrom = prev?.from || startOfDay(subDays(newTo, 6));
-        // If currentFrom is after newTo, set currentFrom to startOfDay(newTo)
-        // Otherwise, keep currentFrom.
         const newFrom = isAfter(currentFrom, newTo) ? startOfDay(newTo) : currentFrom;
         return { from: newFrom, to: newTo };
     });
@@ -460,7 +455,7 @@ export default function TeamOverviewPage() {
                   variant={"outline"}
                   className={cn("w-full sm:w-[280px] justify-start text-left font-normal", !dateRange?.from && "text-muted-foreground")}
                 >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  <CalendarDays className="mr-2 h-4 w-4" />
                   {dateRange?.from ? format(dateRange.from, "LLL dd, y") : <span>Pick a start date</span>}
                 </Button>
               </PopoverTrigger>
@@ -479,7 +474,7 @@ export default function TeamOverviewPage() {
                   variant={"outline"}
                   className={cn("w-full sm:w-[280px] justify-start text-left font-normal", !dateRange?.to && "text-muted-foreground")}
                 >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  <CalendarDays className="mr-2 h-4 w-4" />
                   {dateRange?.to ? format(dateRange.to, "LLL dd, y") : <span>Pick an end date</span>}
                 </Button>
               </PopoverTrigger>
@@ -607,10 +602,10 @@ export default function TeamOverviewPage() {
               member={member}
               showDetailedScore={isHR}
               onRetry={() => handleRetryMemberProcessing(member.id)}
-              currentScoreDate={dateRange?.to} // Pass the end date of the selected range
+              currentScoreDate={dateRange?.to} 
             />
           ))}
-          {!isHR && teamData.length === 0 && (
+          {!isHR && teamData.length === 0 && ( 
             <Alert className="col-span-full">
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>No Team Data Available</AlertTitle>
@@ -622,3 +617,5 @@ export default function TeamOverviewPage() {
     </div>
   );
 }
+
+    
