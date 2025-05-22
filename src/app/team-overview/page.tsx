@@ -14,13 +14,35 @@ import {
 } from "@/ai/flows/calculate-fragmentation-score";
 import type { TeamMemberFocus, GenericActivityItem, MicrosoftGraphUser } from "@/lib/types";
 
-// Mock activities - in a real app, this would be fetched from backend integrations per user
-const getMockActivitiesForUser = (userId: string): GenericActivityItem[] => [
-  { type: 'meeting', timestamp: new Date(Date.now() - Math.random() * 5 * 24 * 3600000).toISOString(), details: `Sync for ${userId}`, source: 'teams' },
-  { type: 'task_update', timestamp: new Date(Date.now() - Math.random() * 3 * 24 * 3600000).toISOString(), details: `Updated JIRA-${Math.floor(Math.random()*100)}`, source: 'jira' },
-  { type: 'email_sent', timestamp: new Date(Date.now() - Math.random() * 2 * 24 * 3600000).toISOString(), details: 'Follow-up with client', source: 'm365' },
-  { type: 'code_commit', timestamp: new Date(Date.now() - Math.random() * 7 * 24 * 3600000).toISOString(), details: `Feature: ABC for ${userId}`, source: 'other' },
-];
+// Generates a deterministic numeric offset based on userId
+const getDeterministicActivityOffset = (userId: string, factor: number, range: number): number => {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = (hash << 5) - hash + userId.charCodeAt(i);
+    hash |= 0; // Convert to 32bit integer
+  }
+  // Use modulo to keep it somewhat varied but deterministic based on ID
+  return (Math.abs(hash) % factor) * range; 
+};
+
+
+// Mock activities - now more deterministic based on userId
+const getMockActivitiesForUser = (userId: string): GenericActivityItem[] => {
+  const now = Date.now();
+  // Generate slightly different but consistent timestamps for each user based on their ID
+  const offset1 = getDeterministicActivityOffset(userId, 5, 2 * 3600000); // up to 10 hours ago for meetings
+  const offset2 = getDeterministicActivityOffset(userId, 3, 1 * 3600000); // up to 3 hours ago for tasks
+  const offset3 = getDeterministicActivityOffset(userId, 7, 0.5 * 3600000); // up to 3.5 hours ago for emails
+  const offset4 = getDeterministicActivityOffset(userId, 4, 3 * 3600000); // up to 12 hours ago for commits
+
+  return [
+    { type: 'meeting', timestamp: new Date(now - offset1).toISOString(), details: `Sync for ${userId.substring(0,5)}`, source: 'teams' },
+    { type: 'task_update', timestamp: new Date(now - offset2).toISOString(), details: `Updated JIRA-${Math.floor(getDeterministicActivityOffset(userId, 100, 1)) + 100}`, source: 'jira' },
+    { type: 'email_sent', timestamp: new Date(now - offset3).toISOString(), details: 'Follow-up with client', source: 'm365' },
+    { type: 'code_commit', timestamp: new Date(now - offset4).toISOString(), details: `Feature: ABC for ${userId.substring(0,5)}`, source: 'other' },
+    { type: 'meeting', timestamp: new Date(now - getDeterministicActivityOffset(userId, 24, 3600000)).toISOString(), details: 'Daily Stand-up', source: 'teams' },
+  ];
+};
 
 
 export default function TeamOverviewPage() {
@@ -37,6 +59,7 @@ export default function TeamOverviewPage() {
       const fetchGraphUsers = async () => {
         setIsLoadingUsers(true);
         setUserFetchError(null);
+        setTeamData([]); // Clear previous data
         try {
           const response = await fetch("/api/microsoft-graph/users");
           if (!response.ok) {
@@ -55,17 +78,28 @@ export default function TeamOverviewPage() {
             return true;
           });
 
+          if (validMsUsers.length === 0 && msUsers.length > 0) {
+            setUserFetchError("Fetched users from MS Graph, but none had a valid 'id' field. Check MS Graph API response structure.");
+            setIsLoadingUsers(false);
+            return;
+          }
+           if (validMsUsers.length === 0) {
+            setUserFetchError("No users with valid IDs found in Microsoft Graph. Ensure users exist and the API is returning them correctly with an 'id' field.");
+            setIsLoadingUsers(false);
+            return;
+          }
+
+
           const initialTeamData: TeamMemberFocus[] = validMsUsers.map(msUser => ({
-            id: msUser.id, // Now guaranteed to be present
-            name: msUser.displayName || msUser.userPrincipalName,
-            email: msUser.userPrincipalName,
-            // For simplicity, assign a default role. In a real app, this might come from MS Graph groups or another source.
-            role: (msUser.userPrincipalName.toLowerCase().includes('hr')) ? 'hr' : 'developer', 
-            fragmentationScore: 0, // Placeholder, will be calculated by AI
-            lastWeekTrend: 0, // Placeholder, could be calculated from historical scores
-            overloadStatus: 'Stable', // Placeholder, will be derived from AI riskLevel
+            id: msUser.id, 
+            name: msUser.displayName || msUser.userPrincipalName || "Unknown User",
+            email: msUser.userPrincipalName || "N/A",
+            role: (msUser.userPrincipalName?.toLowerCase().includes('hr')) ? 'hr' : 'developer', 
+            fragmentationScore: 0, 
+            lastWeekTrend: 0, 
+            overloadStatus: 'Stable', 
             avatarUrl: `https://placehold.co/100x100.png?text=${(msUser.displayName || msUser.userPrincipalName)?.[0]?.toUpperCase() || 'U'}`,
-            isLoadingScore: true, // Mark as true to trigger AI calculation
+            isLoadingScore: true, 
             scoreError: null,
           }));
           setTeamData(initialTeamData);
@@ -87,16 +121,17 @@ export default function TeamOverviewPage() {
     if (isHR && isCalculatingScores && teamData.length > 0 && teamData.some(m => m.isLoadingScore)) {
       const calculateScoresForAllMembers = async () => {
         const updatedTeamDataPromises = teamData.map(async (member) => {
-          if (!member.isLoadingScore || member.scoreError) return member;
+          // Skip if score already calculated, or if it previously errored and we don't want to retry automatically
+          if (!member.isLoadingScore) return member; 
 
           try {
             const activities = getMockActivitiesForUser(member.id);
             const input: CalculateFragmentationScoreInput = {
               userId: member.id,
-              activityWindowDays: 7,
+              activityWindowDays: 7, // Consistent window for mock data
               activities: activities,
             };
-            console.log(`Requesting score calculation for ${member.name} (ID: ${member.id})`);
+            console.log(`Requesting score calculation for ${member.name} (ID: ${member.id}) with deterministic activities.`);
             const result = await calculateFragmentationScore(input);
             console.log(`Score calculated for ${member.name} (ID: ${member.id}):`, result);
             return {
@@ -114,14 +149,16 @@ export default function TeamOverviewPage() {
               ...member,
               isLoadingScore: false,
               scoreError: errorMessage,
-              aiSummary: `Error: ${errorMessage}`, // Provide error in summary for visibility
-              aiRiskLevel: "High" as "Low" | "Moderate" | "High", // Default to high risk on error
+              aiSummary: `Error: ${errorMessage}`,
+              aiRiskLevel: "High" as "Low" | "Moderate" | "High",
+              aiCalculatedScore: 0, // Set a default score on error
             };
           }
         });
 
         const settledTeamData = await Promise.all(updatedTeamDataPromises);
         setTeamData(settledTeamData);
+        // Check if all scores are done (either loaded or errored)
         if (settledTeamData.every(m => !m.isLoadingScore)) {
             setIsCalculatingScores(false);
         }
@@ -129,12 +166,15 @@ export default function TeamOverviewPage() {
 
       calculateScoresForAllMembers();
     }
-  }, [isHR, teamData, isCalculatingScores]);
+  }, [isHR, teamData, isCalculatingScores]); // Rerun if teamData changes (e.g. more users loaded, or a score is calculated)
   
   const teamStats = teamData.reduce((acc, member) => {
-    if (member.isLoadingScore || member.scoreError || !member.aiRiskLevel) return acc;
+    if (member.isLoadingScore || !member.aiRiskLevel) return acc; // Skip if loading or no risk level
 
-    const status = member.aiRiskLevel === 'Low' ? 'Stable' : member.aiRiskLevel === 'Moderate' ? 'At Risk' : 'Overloaded'; 
+    // Prioritize aiRiskLevel if available (meaning AI calculation was successful)
+    const riskLevel = member.aiRiskLevel || member.overloadStatus;
+    
+    const status = riskLevel === 'Low' ? 'Stable' : riskLevel === 'Moderate' ? 'At Risk' : 'Overloaded'; 
     if (status === "Stable") acc.stable++;
     else if (status === "At Risk") acc.atRisk++;
     else if (status === "Overloaded") acc.overloaded++;
@@ -184,7 +224,7 @@ export default function TeamOverviewPage() {
           </AlertDescription>
         </Alert>
       )}
-      {isHR && userFetchError && (
+      {isHR && userFetchError && !isLoadingUsers && (
         <Alert variant="destructive" className="shadow-md">
           <AlertTriangle className="h-5 w-5" />
           <AlertTitle>Error Fetching Users</AlertTitle>
@@ -269,7 +309,7 @@ export default function TeamOverviewPage() {
           {teamData.map((member) => (
             <TeamMemberCard key={member.id} member={member} showDetailedScore={isHR} />
           ))}
-           {!isHR && teamData.length === 0 && ( // Show this for non-HR if teamData is empty (e.g., if MS Graph fetch wasn't even attempted)
+           {!isHR && teamData.length === 0 && ( 
             <Alert className="col-span-full">
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>No Team Data Available</AlertTitle>
@@ -283,4 +323,3 @@ export default function TeamOverviewPage() {
     </div>
   );
 }
-
