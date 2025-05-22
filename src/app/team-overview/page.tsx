@@ -43,7 +43,6 @@ export default function TeamOverviewPage() {
     };
   });
 
-  // Helper to fetch activities for a specific day and calculate score
   const fetchActivitiesAndCalculateDailyScore = useCallback(async (
     memberId: string,
     memberEmail: string | undefined,
@@ -52,9 +51,9 @@ export default function TeamOverviewPage() {
   ): Promise<CalculateFragmentationScoreOutput | { error: string; details?: any; activitiesCount: number }> => {
     console.log(`TEAM OVERVIEW (DailyScore): Processing for member ${memberId} (${memberEmail || 'No Email'}) for period: ${dayStart.toISOString()} to ${dayEnd.toISOString()}`);
     let dailyActivities: GenericActivityItem[] = [];
-    let activityFetchError: string | null = null;
+    let apiFetchError: string | null = null;
 
-    // Fetch Jira Activities per user, per day
+    // Fetch Jira Activities
     if (memberEmail) {
       try {
         const jiraResponse = await fetch(`/api/jira/issues?userEmail=${encodeURIComponent(memberEmail)}&startDate=${encodeURIComponent(dayStart.toISOString())}&endDate=${encodeURIComponent(dayEnd.toISOString())}`, { cache: 'no-store' });
@@ -65,12 +64,12 @@ export default function TeamOverviewPage() {
         } else {
           const errorData = await jiraResponse.json();
           const jiraErrorMsg = `Jira: ${errorData.error || jiraResponse.statusText}`;
-          activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + jiraErrorMsg;
+          apiFetchError = (apiFetchError ? apiFetchError + "; " : "") + jiraErrorMsg;
           console.warn(`TEAM OVERVIEW (DailyScore): Jira fetch error for ${memberId} on ${format(dayStart, 'yyyy-MM-dd')}: ${jiraErrorMsg}`);
         }
       } catch (e: any) {
         const jiraCatchError = `Jira fetch exception: ${e.message}`;
-        activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + jiraCatchError;
+        apiFetchError = (apiFetchError ? apiFetchError + "; " : "") + jiraCatchError;
         console.warn(`TEAM OVERVIEW (DailyScore): Jira fetch exception for ${memberId} on ${format(dayStart, 'yyyy-MM-dd')}: ${jiraCatchError}`);
       }
     }
@@ -85,12 +84,12 @@ export default function TeamOverviewPage() {
       } else {
         const errorData = await teamsResponse.json();
         const teamsErrorMsg = `Teams: ${errorData.error || teamsResponse.statusText}`;
-        activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + teamsErrorMsg;
+        apiFetchError = (apiFetchError ? apiFetchError + "; " : "") + teamsErrorMsg;
         console.warn(`TEAM OVERVIEW (DailyScore): Teams fetch error for ${memberId} on ${format(dayStart, 'yyyy-MM-dd')}: ${teamsErrorMsg}`);
       }
     } catch (e: any) {
       const teamsCatchError = `Teams fetch exception: ${e.message}`;
-      activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + teamsCatchError;
+      apiFetchError = (apiFetchError ? apiFetchError + "; " : "") + teamsCatchError;
       console.warn(`TEAM OVERVIEW (DailyScore): Teams fetch exception for ${memberId} on ${format(dayStart, 'yyyy-MM-dd')}: ${teamsCatchError}`);
     }
     
@@ -105,19 +104,25 @@ export default function TeamOverviewPage() {
         activities: dailyActivities,
       };
       const result = calculateScoreAlgorithmically(input);
-      if (activityFetchError && result.summary) {
-        return { ...result, summary: `Note: Some activity data for this day might be missing. Errors: ${activityFetchError}. Original Summary: ${result.summary}` };
-      } else if (activityFetchError) {
-         return { ...result, summary: `Note: Some activity data for this day might be missing. Errors: ${activityFetchError}.` };
+      
+      let summaryWithFetchNotes = result.summary;
+      if (apiFetchError && result.summary) {
+        summaryWithFetchNotes = `Note: Some activity data for this day might be missing/incomplete. Errors: ${apiFetchError}. Original Summary: ${result.summary}`;
+      } else if (apiFetchError) {
+         summaryWithFetchNotes = `Note: Some activity data for this day might be missing/incomplete. Errors: ${apiFetchError}.`;
       }
-      return result;
+      return { ...result, summary: summaryWithFetchNotes, activityError: apiFetchError };
     } catch (scoreErr: any) {
       const scoreErrorMessage = `Algorithmic score calc error for day ${format(dayStart, 'yyyy-MM-dd')}: ${scoreErr.message}`;
       console.error(`TEAM OVERVIEW (DailyScore): ${scoreErrorMessage}`, scoreErr);
-      const baseErrorReturn = { error: activityFetchError ? `${activityFetchError}; ${scoreErrorMessage}` : scoreErrorMessage , details: {day: format(dayStart, 'yyyy-MM-dd')}, activitiesCount: dailyActivities.length };
+      const baseErrorReturn = { 
+        error: apiFetchError ? `${apiFetchError}; ${scoreErrorMessage}` : scoreErrorMessage, 
+        details: {day: format(dayStart, 'yyyy-MM-dd')}, 
+        activitiesCount: dailyActivities.length 
+      };
       return baseErrorReturn;
     }
-  }, []);
+  }, [/* calculateScoreAlgorithmically is stable from import */]);
 
 
   const processSingleMember = useCallback(async (
@@ -130,6 +135,7 @@ export default function TeamOverviewPage() {
     let overallMemberError: string | null = null;
     const historicalScoresData: HistoricalScore[] = [];
     let currentDayCalculatedScoreData: CalculateFragmentationScoreOutput | null = null;
+    let currentDayActivityError: string | null = null;
 
     const mainDayStart = startOfDay(effectiveEndDateForRange);
     const mainDayEnd = isEqual(startOfDay(effectiveEndDateForRange), startOfDay(currentSystemTimeWhenProcessingStarted))
@@ -142,50 +148,64 @@ export default function TeamOverviewPage() {
     if ('error' in mainDayResult) {
       const errorMsg = `Score for ${format(effectiveEndDateForRange, 'yyyy-MM-dd')}: ${mainDayResult.error}`;
       overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + errorMsg;
+      currentDayActivityError = mainDayResult.error; // Capture specific error for the main day
       console.warn(`TEAM OVERVIEW (Member): Error for main day score for ${memberInput.name} on ${format(effectiveEndDateForRange, 'yyyy-MM-dd')}: ${mainDayResult.error}`);
     } else {
       currentDayCalculatedScoreData = mainDayResult;
+      currentDayActivityError = mainDayResult.activityError || null;
+      if (mainDayResult.activityError) {
+          overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + `Activity fetch issues on ${format(effectiveEndDateForRange, 'yyyy-MM-dd')}: ${mainDayResult.activityError}`;
+      }
       console.log(`TEAM OVERVIEW (Member): Main day score for ${memberInput.name} on ${format(effectiveEndDateForRange, 'yyyy-MM-dd')}: Score=${mainDayResult.fragmentationScore}, Activities=${mainDayResult.activitiesCount}. Summary: ${mainDayResult.summary}`);
     }
 
     for (let i = 0; i < NUMBER_OF_HISTORICAL_DAYS_FOR_TREND; i++) {
-      const historicalDateCandidate = subDays(startOfDay(effectiveEndDateForRange), i + 1); 
+      const historicalDate = subDays(startOfDay(effectiveEndDateForRange), i + 1); 
 
-      if (isBefore(historicalDateCandidate, startOfDay(effectiveStartDateForRange))) {
-        console.log(`TEAM OVERVIEW (Member): Historical date ${format(historicalDateCandidate, 'yyyy-MM-dd')} is before start date of range ${format(startOfDay(effectiveStartDateForRange), 'yyyy-MM-dd')}. Skipping further historical for ${memberInput.name}.`);
+      if (isBefore(historicalDate, startOfDay(effectiveStartDateForRange))) {
+        console.log(`TEAM OVERVIEW (Member): Historical date ${format(historicalDate, 'yyyy-MM-dd')} is before start date of range ${format(startOfDay(effectiveStartDateForRange), 'yyyy-MM-dd')}. Skipping further historical for ${memberInput.name}.`);
         break;
       }
       
-      const historicalDayStart = startOfDay(historicalDateCandidate);
-      const historicalDayEnd = endOfDay(historicalDateCandidate); 
+      const historicalDayStart = startOfDay(historicalDate);
+      const historicalDayEnd = endOfDay(historicalDate); 
 
       console.log(`TEAM OVERVIEW (Member): Processing historical score for ${memberInput.name} for ${format(historicalDayStart, 'yyyy-MM-dd')}`);
       const historicalDayResult = await fetchActivitiesAndCalculateDailyScore(memberInput.id, memberInput.email, historicalDayStart, historicalDayEnd);
 
       if ('error' in historicalDayResult) {
-        const errorMsg = `Historical for ${format(historicalDateCandidate, 'yyyy-MM-dd')}: ${historicalDayResult.error}`;
+        const errorMsg = `Historical for ${format(historicalDate, 'yyyy-MM-dd')}: ${historicalDayResult.error}`;
         overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + errorMsg;
-        console.warn(`TEAM OVERVIEW (Member): Error calculating historical score for ${memberInput.name} on ${format(historicalDateCandidate, 'yyyy-MM-dd')}: ${historicalDayResult.error}`);
+        console.warn(`TEAM OVERVIEW (Member): Error calculating historical score for ${memberInput.name} on ${format(historicalDate, 'yyyy-MM-dd')}: ${historicalDayResult.error}`);
       } else {
-        console.log(`TEAM OVERVIEW (Member): Historical score for ${memberInput.name} on ${format(historicalDateCandidate, 'yyyy-MM-dd')}: Score=${historicalDayResult.fragmentationScore}, Activities=${historicalDayResult.activitiesCount}. Summary: ${historicalDayResult.summary}`);
+        console.log(`TEAM OVERVIEW (Member): Historical score for ${memberInput.name} on ${format(historicalDate, 'yyyy-MM-dd')}: Score=${historicalDayResult.fragmentationScore}, Activities=${historicalDayResult.activitiesCount}. Summary: ${historicalDayResult.summary}`);
         historicalScoresData.push({
-          date: format(startOfDay(historicalDateCandidate), 'yyyy-MM-dd'), 
+          date: format(startOfDay(historicalDate), 'yyyy-MM-dd'), 
           score: historicalDayResult.fragmentationScore,
           riskLevel: historicalDayResult.riskLevel,
           summary: historicalDayResult.summary,
           activitiesCount: historicalDayResult.activitiesCount,
+          activityError: historicalDayResult.activityError || undefined,
         });
+         if (historicalDayResult.activityError) {
+             overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + `Hist. activity fetch issues on ${format(historicalDate, 'yyyy-MM-dd')}: ${historicalDayResult.activityError}`;
+         }
       }
     }
     historicalScoresData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); 
 
     let avgHistScore: number | null = null;
-    const validHistoricalScoresForAverage = historicalScoresData.filter(hs => hs.score > 0.5 || (hs.score === 0.5 && hs.activitiesCount > 0) );
+    // Only average scores where there wasn't a critical calculation error (an error in 'historicalDayResult' means score might be a fallback)
+    // And only if the score is not the "no activity" baseline OR if it is the baseline but there were actually activities (edge case for score 0.5).
+    const validHistoricalScoresForAverage = historicalScoresData.filter(hs => 
+        hs.score > 0.5 || (hs.score === 0.5 && hs.activitiesCount > 0) 
+    );
     
     if (validHistoricalScoresForAverage.length > 0) {
       const sum = validHistoricalScoresForAverage.reduce((acc, curr) => acc + curr.score, 0);
       avgHistScore = parseFloat((sum / validHistoricalScoresForAverage.length).toFixed(1));
-    } else if (historicalScoresData.length > 0) { 
+    } else if (historicalScoresData.length > 0 && historicalScoresData.every(hs => hs.score === 0.5 && hs.activitiesCount === 0)) { 
+      // If all historical scores are 0.5 due to no activity, average is 0.5
       avgHistScore = 0.5;
     }
 
@@ -199,8 +219,8 @@ export default function TeamOverviewPage() {
       averageHistoricalScore: avgHistScore,
       isLoadingScore: false,
       isLoadingActivities: false,
-      scoreError: overallMemberError,
-      activityError: overallMemberError, 
+      scoreError: overallMemberError, // This will contain all errors, including calculation and fetch errors
+      activityError: currentDayActivityError, // More specific to main day's activity fetching
     };
   }, [fetchActivitiesAndCalculateDailyScore]);
 
@@ -237,7 +257,7 @@ export default function TeamOverviewPage() {
       setTeamData(prevTeamData =>
         prevTeamData.map(m =>
           m.id === memberId ? updatedMember : m
-        )
+        ).sort((a, b) => a.name.localeCompare(b.name))
       );
     } else {
       console.error(`TEAM OVERVIEW: Could not find member with ID ${memberId} to retry, or date range not set.`);
@@ -255,14 +275,14 @@ export default function TeamOverviewPage() {
         
         const currentSystemTimeForFetch = new Date(); 
         const effectiveRangeFrom = startOfDay(dateRange.from);
-        let effectiveRangeToForFetch: Date; 
+        let effectiveRangeEndForFetch: Date; 
 
         if (isEqual(startOfDay(dateRange.to), startOfDay(currentSystemTimeForFetch))) {
-            effectiveRangeToForFetch = currentSystemTimeForFetch; 
+            effectiveRangeEndForFetch = currentSystemTimeForFetch; 
         } else {
-            effectiveRangeToForFetch = endOfDay(dateRange.to);
+            effectiveRangeEndForFetch = endOfDay(dateRange.to);
         }
-        console.log(`TEAM OVERVIEW: Effective processing range for ALL members: ${format(effectiveRangeFrom, 'yyyy-MM-dd')} to ${format(effectiveRangeToForFetch, 'yyyy-MM-dd HH:mm:ss')}`);
+        console.log(`TEAM OVERVIEW: Effective processing range for ALL members: ${format(effectiveRangeFrom, 'yyyy-MM-dd')} to ${format(effectiveRangeEndForFetch, 'yyyy-MM-dd HH:mm:ss')}`);
 
         let msUsers: MicrosoftGraphUser[] = [];
         try {
@@ -291,46 +311,72 @@ export default function TeamOverviewPage() {
           return true;
         });
 
-        if (validMsUsers.length === 0) {
-          const errorMsg = msUsers.length > 0 ? "No users with valid IDs found from MS Graph." : "No users returned from MS Graph.";
+        const initialTeamDataSetup: TeamMemberFocus[] = validMsUsers.map(msUser => ({
+          id: msUser.id!,
+          name: msUser.displayName || msUser.userPrincipalName || "Unknown User",
+          email: msUser.userPrincipalName || undefined,
+          role: (msUser.userPrincipalName?.toLowerCase().includes('hr')) ? 'hr' : 'developer', // Simple role determination
+          avatarUrl: `https://placehold.co/100x100.png?text=${(msUser.displayName || msUser.userPrincipalName || "U")?.[0]?.toUpperCase()}`,
+          isLoadingScore: true, isLoadingActivities: true, scoreError: null, activityError: null,
+          historicalScores: [], averageHistoricalScore: null, currentDayScoreData: null,
+        })).sort((a, b) => a.name.localeCompare(b.name));
+        
+        setTeamData(initialTeamDataSetup); // Set initial data with loading states
+
+        if (initialTeamDataSetup.length === 0) {
+          const errorMsg = validMsUsers.length === 0 && msUsers.length > 0 ? "No users with valid IDs found from MS Graph." : "No users returned from MS Graph.";
           setUserFetchError(errorMsg);
           console.warn(`TEAM OVERVIEW: ${errorMsg}`);
           setIsProcessingMembers(false);
           return;
         }
 
-        const initialTeamDataSetup: TeamMemberFocus[] = validMsUsers.map(msUser => ({
-          id: msUser.id!,
-          name: msUser.displayName || msUser.userPrincipalName || "Unknown User",
-          email: msUser.userPrincipalName || undefined,
-          role: (msUser.userPrincipalName?.toLowerCase().includes('hr')) ? 'hr' : 'developer',
-          avatarUrl: `https://placehold.co/100x100.png?text=${(msUser.displayName || msUser.userPrincipalName || "U")?.[0]?.toUpperCase()}`,
-          isLoadingScore: true, isLoadingActivities: true, scoreError: null, activityError: null,
-          historicalScores: [], averageHistoricalScore: null, currentDayScoreData: null,
-        }));
-        setTeamData(initialTeamDataSetup);
 
         console.log(`TEAM OVERVIEW: Starting to process ${initialTeamDataSetup.length} members.`);
-        const processedTeamDataPromises = initialTeamDataSetup.map(member => {
-            const { currentDayScoreData: _a, historicalScores: _b, averageHistoricalScore: _c, isLoadingScore: _d, isLoadingActivities: _e, scoreError: _f, activityError: _g, ...baseInfo } = member;
-            return processSingleMember(baseInfo, effectiveRangeFrom, effectiveRangeToForFetch, currentSystemTimeForFetch);
-        });
-        
-        for (const promise of processedTeamDataPromises) {
-            try {
-                const updatedMember = await promise;
-                setTeamData(prev => prev.map(m => m.id === updatedMember.id ? updatedMember : m));
-            } catch (error: any) {
-                console.error(`TEAM OVERVIEW: Critical error processing member during parallel execution. Member ID might not be available here. Error:`, error);
-            }
+        // Process members one by one to see updates, or use Promise.all for parallel
+        for (const memberInit of initialTeamDataSetup) {
+          const { currentDayScoreData: _a, historicalScores: _b, averageHistoricalScore: _c, isLoadingScore: _d, isLoadingActivities: _e, scoreError: _f, activityError: _g, ...baseInfo } = memberInit;
+          try {
+            const updatedMember = await processSingleMember(baseInfo, effectiveRangeFrom, effectiveRangeEndForFetch, currentSystemTimeForFetch);
+            setTeamData(prev => {
+              const newTeamData = prev.filter(m => m.id !== updatedMember.id);
+              newTeamData.push(updatedMember);
+              return newTeamData.sort((a, b) => a.name.localeCompare(b.name));
+            });
+          } catch (error) {
+            console.error(`TEAM OVERVIEW: CRITICAL failure processing member ${baseInfo.name} (ID: ${baseInfo.id}) in main loop.`, error);
+            // Update this member to show a critical error on their card
+            setTeamData(prev => {
+              const existingMember = prev.find(m => m.id === baseInfo.id);
+              const erroredMemberData: TeamMemberFocus = {
+                ...(existingMember || baseInfo), // Base it on existing if it's there, or the initial member info
+                isLoadingScore: false,
+                isLoadingActivities: false,
+                scoreError: `Critical error during processing: ${error instanceof Error ? error.message : String(error)}. Check console.`,
+                activityError: `Critical error: ${error instanceof Error ? error.message : String(error)}`,
+                currentDayScoreData: null, // Clear any potentially partial data
+                historicalScores: [],
+                averageHistoricalScore: null,
+              };
+               const newTeamData = prev.filter(m => m.id !== baseInfo.id);
+               newTeamData.push(erroredMemberData);
+               return newTeamData.sort((a,b) => a.name.localeCompare(b.name));
+            });
+          }
         }
         
         setIsProcessingMembers(false);
         console.log("TEAM OVERVIEW: All members processing attempted.");
       };
       fetchGraphUsersAndProcessAll();
+    } else if (!isHR) {
+      setTeamData([]);
+      setIsLoadingUsers(false);
+      setIsProcessingMembers(false);
+      setUserFetchError(null);
     }
-  }, [isHR, dateRange, refreshKey, processSingleMember, fetchActivitiesAndCalculateDailyScore]); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHR, dateRange, refreshKey, processSingleMember]); 
 
 
   const teamStats = teamData.reduce((acc, member) => {
@@ -354,6 +400,7 @@ export default function TeamOverviewPage() {
 
   const handleEndDateSelect = (day: Date | undefined) => {
     if (!day) return;
+    // If selecting today, set time to current time. Otherwise, end of day.
     const newTo = isEqual(startOfDay(day), startOfDay(new Date())) ? new Date() : endOfDay(day);
     setDateRange(prev => {
         const currentFrom = prev?.from || startOfDay(subDays(newTo, 6)); 
@@ -362,6 +409,7 @@ export default function TeamOverviewPage() {
     });
   };
 
+  // Custom isAfter because date-fns isAfter can be tricky with start/end of day
   function isAfter(date1: Date, date2: Date): boolean {
     return date1.getTime() > date2.getTime();
   }
@@ -376,7 +424,9 @@ export default function TeamOverviewPage() {
     setDetailedActivities([]);
     setDetailedActivitiesError(null);
 
+    // Determine the time window for fetching activities for the dialog (main score day)
     const activityDayStart = startOfDay(dateRange.to);
+    // If the dateRange.to is today, fetch up to current time, otherwise for the full day
     const activityDayEnd = isEqual(startOfDay(dateRange.to), startOfDay(new Date())) ? new Date() : endOfDay(dateRange.to);
 
     console.log(`TEAM_OVERVIEW (Dialog): Fetching activities for ${memberToView.name} for date ${format(activityDayStart, 'yyyy-MM-dd')} up to ${format(activityDayEnd, 'HH:mm:ss')}`);
@@ -387,6 +437,7 @@ export default function TeamOverviewPage() {
     // Fetch Jira Activities for dialog
     if (memberToView.email) {
         try {
+            // Use the precise activityDayStart and activityDayEnd for the API call
             const jiraDialogResponse = await fetch(`/api/jira/issues?userEmail=${encodeURIComponent(memberToView.email)}&startDate=${encodeURIComponent(activityDayStart.toISOString())}&endDate=${encodeURIComponent(activityDayEnd.toISOString())}`, { cache: 'no-store' });
             if (jiraDialogResponse.ok) {
                 activitiesForDialog.push(...await jiraDialogResponse.json());
@@ -402,6 +453,7 @@ export default function TeamOverviewPage() {
 
     // Fetch Teams Activities for dialog
     try {
+      // Use the precise activityDayStart and activityDayEnd
       const teamsResponse = await fetch(`/api/teams/activity?userId=${encodeURIComponent(memberToView.id)}&startDate=${encodeURIComponent(activityDayStart.toISOString())}&endDate=${encodeURIComponent(activityDayEnd.toISOString())}`, { cache: 'no-store' });
       if (teamsResponse.ok) {
         activitiesForDialog.push(...await teamsResponse.json());
@@ -435,7 +487,7 @@ export default function TeamOverviewPage() {
             <div>
               <CardTitle className="text-3xl font-bold text-primary-foreground">Team Focus Overview</CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Scores calculated based on daily activities. Historical trend shows prior daily scores.
+                Daily scores based on activities. Historical trend shows prior daily scores.
               </CardDescription>
             </div>
             <Image
@@ -472,7 +524,7 @@ export default function TeamOverviewPage() {
               <PopoverContent className="w-auto p-0" align="start">
                 <Calendar
                   mode="single" selected={dateRange?.from} onSelect={handleStartDateSelect}
-                  disabled={(date) => date > (dateRange?.to || new Date()) || date < subDays(new Date(), 90) || date > new Date()}
+                  disabled={(date) => date > (dateRange?.to || new Date()) || date < subDays(new Date(), 90) || date > new Date()} // Limit to past 90 days and not after today or selected 'to' date
                   initialFocus
                 />
               </PopoverContent>
@@ -485,13 +537,13 @@ export default function TeamOverviewPage() {
                   className={cn("w-full sm:w-auto min-w-[240px] justify-start text-left font-normal", !dateRange?.to && "text-muted-foreground")}
                 >
                   <CalendarDays className="mr-2 h-4 w-4" />
-                  {dateRange?.to ? format(dateRange.to, "LLL dd, y") : <span>Pick an end date</span>} 
+                  {dateRange?.to ? format(dateRange.to, "LLL dd, y HH:mm") : <span>Pick an end date</span>} 
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
                 <Calendar
                   mode="single" selected={dateRange?.to} onSelect={handleEndDateSelect}
-                  disabled={(date) => date < (dateRange?.from || subDays(new Date(), 90)) || date > new Date()}
+                  disabled={(date) => date < (dateRange?.from || subDays(new Date(),90)) || date > new Date()} // Limit to not before 'from' date or today
                   initialFocus
                 />
               </PopoverContent>
@@ -505,7 +557,7 @@ export default function TeamOverviewPage() {
               Refresh Data
             </Button>
           </CardContent>
-           <CardHeader>
+           <CardHeader> {/* Adjusted CardHeader nesting for this description */}
             <CardDescription className="text-xs text-muted-foreground">
               Historical trend shows daily scores for up to {NUMBER_OF_HISTORICAL_DAYS_FOR_TREND} prior days within the selected Start Date.
             </CardDescription>
@@ -561,7 +613,7 @@ export default function TeamOverviewPage() {
             </Alert>
       )}
       
-      {isHR && !isLoadingUsers && !userFetchError && !isProcessingMembers && teamData.length > 0 && !teamData.some(m => m.isLoadingScore) && (
+      {isHR && !isLoadingUsers && !userFetchError && !isProcessingMembers && teamData.length > 0 && !teamData.some(m => m.isLoadingScore || m.isLoadingActivities) && (
         <Alert variant="default" className="shadow-md border-green-500/50 text-green-700 dark:border-green-400/50 dark:text-green-400">
           <ShieldCheck className="h-5 w-5 text-green-600 dark:text-green-500" />
           <AlertTitle className="font-semibold text-green-700 dark:text-green-400">Team Data Processed</AlertTitle>
