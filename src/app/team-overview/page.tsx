@@ -8,12 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Users, BarChart3, ShieldAlert, Loader2, AlertTriangle, ShieldCheck, ExternalLink } from "lucide-react";
 import Image from "next/image";
-import { 
-  calculateFragmentationScore, 
-  type CalculateFragmentationScoreInput,
-  type CalculateFragmentationScoreOutput
-} from "@/ai/flows/calculate-fragmentation-score";
-import type { TeamMemberFocus, GenericActivityItem, MicrosoftGraphUser, HistoricalScore } from "@/lib/types";
+import { calculateScoreAlgorithmically } from "@/lib/score-calculator";
+import type { TeamMemberFocus, GenericActivityItem, MicrosoftGraphUser, HistoricalScore, CalculateFragmentationScoreInputType, CalculateFragmentationScoreOutput } from "@/lib/types";
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
 
 const NUMBER_OF_HISTORICAL_DAYS = 5;
@@ -26,96 +22,104 @@ export default function TeamOverviewPage() {
   const [userFetchError, setUserFetchError] = useState<string | null>(null);
   const [isProcessingMembers, setIsProcessingMembers] = useState(false); 
 
-  const fetchAndProcessMemberData = useCallback(async (memberBase: Omit<TeamMemberFocus, 'isLoadingScore' | 'scoreError' | 'currentDayScoreData' | 'historicalScores' | 'averageHistoricalScore' | 'activityError' | 'isLoadingActivities'>): Promise<TeamMemberFocus> => {
-    console.log(`Starting data processing for member: ${memberBase.name} (ID: ${memberBase.id})`);
+  const fetchActivitiesAndCalculateScore = useCallback(async (memberBase: Omit<TeamMemberFocus, 'isLoadingScore' | 'scoreError' | 'currentDayScoreData' | 'historicalScores' | 'averageHistoricalScore' | 'activityError' | 'isLoadingActivities'>, targetDate: Date, isCurrentDayCall: boolean): Promise<CalculateFragmentationScoreOutput | { error: string } > => {
+    let dailyActivities: GenericActivityItem[] = [];
+    let activityFetchError: string | null = null;
+    const dateStr = format(targetDate, 'yyyy-MM-dd');
+    const activityWindowDays = 1; // Always 1 for daily calculation
+
+    console.log(`Fetching activities for ${memberBase.name} for date: ${dateStr}`);
+
+    // Fetch Jira Activities
+    if (memberBase.email) {
+      try {
+        const jiraResponse = await fetch(`/api/jira/issues?userEmail=${encodeURIComponent(memberBase.email)}&startDate=${dateStr}&endDate=${dateStr}`);
+        if (jiraResponse.ok) {
+          const jiraActivities: GenericActivityItem[] = await jiraResponse.json();
+          dailyActivities.push(...jiraActivities);
+          console.log(`Fetched ${jiraActivities.length} Jira activities for ${memberBase.name} on ${dateStr}`);
+        } else {
+          const errorData = await jiraResponse.json();
+          activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Jira (${dateStr}): ${errorData.error || jiraResponse.statusText}`;
+        }
+      } catch (e: any) {
+        activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Jira fetch error (${dateStr}): ${e.message}`;
+      }
+    } else {
+       console.warn(`No email for ${memberBase.name} (ID: ${memberBase.id}), skipping Jira fetch for ${dateStr}.`);
+    }
+
+    // Fetch Teams Activities
+    try {
+      const teamsResponse = await fetch(`/api/teams/activity?userId=${encodeURIComponent(memberBase.id)}&startDate=${dateStr}&endDate=${dateStr}`);
+      if (teamsResponse.ok) {
+        const teamsActivities: GenericActivityItem[] = await teamsResponse.json();
+        dailyActivities.push(...teamsActivities);
+        console.log(`Fetched ${teamsActivities.length} Teams activities for ${memberBase.name} on ${dateStr}`);
+      } else {
+        const errorData = await teamsResponse.json();
+        activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Teams (${dateStr}): ${errorData.error || teamsResponse.statusText}`;
+      }
+    } catch (e: any) {
+      activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Teams fetch error (${dateStr}): ${e.message}`;
+    }
+    
+    if (activityFetchError && isCurrentDayCall) { // Only set member-level activity error for current day for now
+      console.warn(`Activity fetch errors for ${memberBase.name} on ${dateStr}: ${activityFetchError}`);
+      // Not setting overallMemberError here, will be part of score calculation result.
+    }
+    
+    console.log(`Total activities for ${memberBase.name} on ${dateStr} before scoring: ${dailyActivities.length}`);
+
+    try {
+      const input: CalculateFragmentationScoreInputType = {
+        userId: memberBase.id,
+        activityWindowDays,
+        activities: dailyActivities,
+      };
+      const result = calculateScoreAlgorithmically(input);
+      console.log(`Algorithmic score for ${memberBase.name} on ${dateStr}: ${result.fragmentationScore}. Activities: ${dailyActivities.length}`);
+      return result;
+    } catch (scoreErr: any) {
+      const scoreErrorMessage = `Algorithmic score calc error (${dateStr}): ${scoreErr.message}`;
+      console.error(scoreErrorMessage, scoreErr);
+      return { error: activityFetchError ? `${activityFetchError}; ${scoreErrorMessage}` : scoreErrorMessage };
+    }
+  }, []);
+
+
+  const processSingleMember = useCallback(async (memberInput: Omit<TeamMemberFocus, 'isLoadingScore' | 'scoreError' | 'currentDayScoreData' | 'historicalScores' | 'averageHistoricalScore' | 'activityError' | 'isLoadingActivities'>): Promise<TeamMemberFocus> => {
+    console.log(`Starting data processing for member: ${memberInput.name} (ID: ${memberInput.id}) with algorithmic calculation.`);
     let overallMemberError: string | null = null;
     const historicalScores: HistoricalScore[] = [];
     let currentDayScoreData: CalculateFragmentationScoreOutput | null = null;
+    let activityFetchErrorForMember: string | null = null;
 
-    // Helper to fetch activities and score for a specific day
-    const getScoreForDay = async (targetDate: Date, isCurrentDayCall: boolean = false): Promise<CalculateFragmentationScoreOutput | null> => {
-      let dailyActivities: GenericActivityItem[] = [];
-      let activityFetchError: string | null = null;
-      const dateStr = format(targetDate, 'yyyy-MM-dd');
-
-      // Fetch Jira Activities for the targetDate
-      if (memberBase.email) {
-        try {
-          const jiraResponse = await fetch(`/api/jira/issues?userEmail=${encodeURIComponent(memberBase.email)}&startDate=${dateStr}&endDate=${dateStr}`);
-          if (jiraResponse.ok) {
-            const jiraActivities: GenericActivityItem[] = await jiraResponse.json();
-            dailyActivities.push(...jiraActivities);
-          } else {
-            const errorData = await jiraResponse.json();
-            activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Jira (${dateStr}): ${errorData.error || jiraResponse.statusText}`;
-          }
-        } catch (e: any) {
-          activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Jira fetch error (${dateStr}): ${e.message}`;
-        }
-      }
-
-      // Fetch Teams Activities for the targetDate
-      try {
-        const teamsResponse = await fetch(`/api/teams/activity?userId=${encodeURIComponent(memberBase.id)}&startDate=${dateStr}&endDate=${dateStr}`);
-        if (teamsResponse.ok) {
-          const teamsActivities: GenericActivityItem[] = await teamsResponse.json();
-          dailyActivities.push(...teamsActivities);
-        } else {
-          const errorData = await teamsResponse.json();
-          activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Teams (${dateStr}): ${errorData.error || teamsResponse.statusText}`;
-        }
-      } catch (e: any) {
-        activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + `Teams fetch error (${dateStr}): ${e.message}`;
-      }
-
-      if (activityFetchError) {
-        console.warn(`Activity fetch errors for ${memberBase.name} on ${dateStr}: ${activityFetchError}`);
-        overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + `Day ${dateStr}: ${activityFetchError}`;
-      }
-      
-      console.log(`Total activities for ${memberBase.name} on ${dateStr}: ${dailyActivities.length}`);
-
-      try {
-        const input: CalculateFragmentationScoreInputType = {
-          userId: memberBase.id,
-          activityWindowDays: 1, // Score for this single day
-          activities: dailyActivities,
-        };
-        const result = await calculateFragmentationScore(input);
-        console.log(`Score for ${memberBase.name} on ${dateStr}: ${result.fragmentationScore}`);
-        return result;
-      } catch (scoreErr: any) {
-        const scoreErrorMessage = `Score calc error (${dateStr}): ${scoreErr.message}`;
-        console.error(scoreErrorMessage, scoreErr);
-        overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + scoreErrorMessage;
-        return null;
-      }
-    };
-
-    // Fetch current day's score (e.g., based on last 7 days or today's activities)
-    // For consistency with historical, let's make "current" also based on just "today"
     const today = new Date();
-    currentDayScoreData = await getScoreForDay(today, true);
+    const currentDayResult = await fetchActivitiesAndCalculateScore(memberInput, today, true);
 
-
-    // Fetch historical scores for the past N days
+    if ('error' in currentDayResult) {
+      overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + `Current day: ${currentDayResult.error}`;
+      activityFetchErrorForMember = currentDayResult.error; // Capture error for current day processing
+    } else {
+      currentDayScoreData = currentDayResult;
+    }
+    
     for (let i = 1; i <= NUMBER_OF_HISTORICAL_DAYS; i++) {
       const pastDate = subDays(today, i);
-      const scoreData = await getScoreForDay(pastDate);
-      if (scoreData) {
+      const historicalDayResult = await fetchActivitiesAndCalculateScore(memberInput, pastDate, false);
+      if ('error' in historicalDayResult) {
+         overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + `Day ${format(pastDate, 'yyyy-MM-dd')}: ${historicalDayResult.error}`;
+      } else {
         historicalScores.push({
           date: format(pastDate, 'yyyy-MM-dd'),
-          score: scoreData.fragmentationScore,
-          riskLevel: scoreData.riskLevel,
-          summary: scoreData.summary,
+          score: historicalDayResult.fragmentationScore,
+          riskLevel: historicalDayResult.riskLevel,
+          summary: historicalDayResult.summary,
         });
-      } else {
-         // If a day's score fails, we still add a placeholder or note it.
-         // For simplicity, we'll just have fewer items in historicalScores.
-         // A more robust solution might add a placeholder with an error.
       }
     }
-    historicalScores.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // Sort by date asc
+    historicalScores.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     let averageHistoricalScore: number | null = null;
     if (historicalScores.length > 0) {
@@ -123,19 +127,19 @@ export default function TeamOverviewPage() {
       averageHistoricalScore = parseFloat((sum / historicalScores.length).toFixed(1));
     }
     
-    console.log(`Finished processing for ${memberBase.name}. Current score: ${currentDayScoreData?.fragmentationScore}, Avg Hist: ${averageHistoricalScore}`);
-
+    console.log(`Finished algorithmic processing for ${memberInput.name}. Current score: ${currentDayScoreData?.fragmentationScore}, Avg Hist: ${averageHistoricalScore}`);
+    
     return {
-      ...memberBase,
+      ...memberInput,
       currentDayScoreData,
       historicalScores,
       averageHistoricalScore,
       isLoadingScore: false,
-      isLoadingActivities: false, // Assuming activities are fetched within getScoreForDay
+      isLoadingActivities: false,
       scoreError: overallMemberError,
-      activityError: null, // activity errors are aggregated into overallMemberError for now
+      activityError: activityFetchErrorForMember, 
     };
-  }, []);
+  }, [fetchActivitiesAndCalculateScore]);
 
 
   const handleRetryMemberProcessing = useCallback(async (memberId: string) => {
@@ -146,11 +150,23 @@ export default function TeamOverviewPage() {
         setTeamData(prevTeamData => 
           prevTeamData.map(m => 
             m.id === memberId 
-              ? { ...m, isLoadingScore: true, scoreError: null, historicalScores: [], averageHistoricalScore: null, currentDayScoreData: null } 
+              ? { ...m, isLoadingScore: true, isLoadingActivities: true, scoreError: null, activityError: null, historicalScores: [], averageHistoricalScore: null, currentDayScoreData: null } 
               : m
           )
         );
-        const updatedMember = await fetchAndProcessMemberData(memberToRetry); // Pass the base member info
+        // Extract the base properties needed for processSingleMember
+        const { 
+          currentDayScoreData, 
+          historicalScores, 
+          averageHistoricalScore, 
+          isLoadingScore, 
+          isLoadingActivities, 
+          scoreError, 
+          activityError, 
+          ...baseMemberInfo 
+        } = memberToRetry;
+
+        const updatedMember = await processSingleMember(baseMemberInfo);
         setTeamData(prevTeamData => 
             prevTeamData.map(m => 
             m.id === memberId ? updatedMember : m
@@ -159,7 +175,7 @@ export default function TeamOverviewPage() {
     } else {
         console.error(`Could not find member with ID ${memberId} to retry.`);
     }
-  }, [teamData, fetchAndProcessMemberData]);
+  }, [teamData, processSingleMember]);
 
 
   useEffect(() => {
@@ -192,16 +208,14 @@ export default function TeamOverviewPage() {
             console.warn(`MS Graph user data missing ID. UPN: ${msUser.userPrincipalName || 'N/A'}. Skipped.`);
             return false;
           }
-          if (!msUser.userPrincipalName) {
-              console.warn(`MS Graph user missing UPN (email) for ID: ${msUser.id}. Jira activities may be unavailable.`);
-          }
+          // Not checking for UPN here, handle in fetchActivitiesAndCalculateScore
           return true;
         });
 
         if (validMsUsers.length === 0) {
           const errorMsg = msUsers.length > 0 
             ? "Fetched users from MS Graph, but none had a valid 'id'." 
-            : "No users found in Microsoft Graph.";
+            : "No users found in Microsoft Graph. Check your configuration and ensure there are users in your tenant, or that the users have an 'id' field.";
           setUserFetchError(errorMsg);
           setIsLoadingUsers(false);
           setIsProcessingMembers(false);
@@ -211,11 +225,11 @@ export default function TeamOverviewPage() {
         const initialTeamData: TeamMemberFocus[] = validMsUsers.map(msUser => ({
           id: msUser.id!, 
           name: msUser.displayName || msUser.userPrincipalName || "Unknown User",
-          email: msUser.userPrincipalName || "", 
+          email: msUser.userPrincipalName || "", // Important for Jira
           role: (msUser.userPrincipalName?.toLowerCase().includes('hr')) ? 'hr' : 'developer', 
           avatarUrl: `https://placehold.co/100x100.png?text=${(msUser.displayName || msUser.userPrincipalName || "U")?.[0]?.toUpperCase()}`,
           isLoadingScore: true, 
-          isLoadingActivities: true, // General loading flag
+          isLoadingActivities: true,
           scoreError: null,
           activityError: null,
           historicalScores: [],
@@ -225,20 +239,25 @@ export default function TeamOverviewPage() {
         setTeamData(initialTeamData); 
         setIsLoadingUsers(false); 
 
-        console.log(`Processing ${initialTeamData.length} valid team members for scores...`);
-        const processedTeamDataPromises = initialTeamData.map(member =>
-           fetchAndProcessMemberData(member).then(updatedMember => {
+        console.log(`Processing ${initialTeamData.length} valid team members for scores using algorithm...`);
+        
+        const processedTeamDataPromises = initialTeamData.map(member => {
+           // Destructure to pass only necessary base info
+           const { currentDayScoreData, historicalScores, averageHistoricalScore, isLoadingScore, isLoadingActivities, scoreError, activityError, ...baseMemberInfo } = member;
+           return processSingleMember(baseMemberInfo).then(updatedMember => {
              setTeamData(prev => prev.map(m => m.id === updatedMember.id ? updatedMember : m));
              return updatedMember;
-           })
-        );
+           });
+        });
+        
         await Promise.all(processedTeamDataPromises);
-        console.log("All team member data processing complete.");
+        console.log("All team member algorithmic data processing complete.");
         setIsProcessingMembers(false); 
       };
       fetchGraphUsersAndProcessAll();
     }
-  }, [isHR, fetchAndProcessMemberData]); 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHR, processSingleMember]); // processSingleMember now wraps fetchActivitiesAndCalculateScore
   
   const teamStats = teamData.reduce((acc, member) => {
     if (member.isLoadingScore || !member.currentDayScoreData?.riskLevel || member.scoreError) return acc; 
@@ -259,7 +278,7 @@ export default function TeamOverviewPage() {
             <div>
               <CardTitle className="text-3xl font-bold text-primary-foreground">Team Focus Overview</CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Visualize your team's cognitive load using live activity data and historical trends.
+                Visualize your team's cognitive load using live activity data and historical trends, calculated by a code-based algorithm.
               </CardDescription>
             </div>
              <Image 
@@ -306,8 +325,8 @@ export default function TeamOverviewPage() {
           <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-500" />
           <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Processing Team Data (This will take time)</AlertTitle>
           <AlertDescription className="text-blue-600 dark:text-blue-500">
-            Fetching activities and calculating current & 5-day historical AI scores for each team member.
-            Number of members remaining to start processing: ({teamData.filter(m => m.isLoadingScore).length}). Please be patient.
+            Fetching activities and calculating current & {NUMBER_OF_HISTORICAL_DAYS}-day historical scores (algorithmic) for each team member.
+            Members remaining: ({teamData.filter(m => m.isLoadingScore || m.isLoadingActivities).length}). Please be patient.
           </AlertDescription>
         </Alert>
       )}
@@ -315,9 +334,9 @@ export default function TeamOverviewPage() {
       {isHR && !isLoadingUsers && !userFetchError && !isProcessingMembers && teamData.length > 0 && (
          <Alert variant="default" className="shadow-md border-green-500/50 text-green-700 dark:border-green-400/50 dark:text-green-400">
           <ShieldCheck className="h-5 w-5 text-green-600 dark:text-green-500" />
-          <AlertTitle className="font-semibold text-green-700 dark:text-green-400">Team Data Processed</AlertTitle>
+          <AlertTitle className="font-semibold text-green-700 dark:text-green-400">Team Data Processed (Algorithmic)</AlertTitle>
           <AlertDescription className="text-green-600 dark:text-green-500">
-            Activity fetching and AI score calculations (current and historical) are complete for all team members.
+            Activity fetching and algorithmic score calculations (current and historical) are complete.
             Some members or specific days might have errors if data couldn't be fetched or processed (check individual cards).
           </AlertDescription>
         </Alert>
@@ -367,7 +386,7 @@ export default function TeamOverviewPage() {
             Microsoft Teams/M365: Requires Azure App Registration with `User.Read.All`, `Presence.Read.All`, `Calendars.Read` (Application permissions, admin consent).
           </p>
           <p>
-            Historical data fetching can be slow and API intensive. Errors for specific days might occur.
+            Historical data fetching can be slow and API intensive. Algorithmic calculation is now used, removing AI model dependency for scores.
           </p>
         </AlertDescription>
       </Alert>
@@ -375,11 +394,11 @@ export default function TeamOverviewPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="text-xl font-semibold">Team Member Status</CardTitle>
+            <CardTitle className="text-xl font-semibold">Team Member Status (Algorithmic)</CardTitle>
             <BarChart3 className="h-6 w-6 text-primary" />
           </div>
           <CardDescription>
-            {isHR ? "Detailed view of each team member's AI-calculated focus status, including current score and 5-day historical trend." : "Overview of team member stability (details restricted)."}
+            {isHR ? "Detailed view of each team member's algorithmically-calculated focus status, including current score and 5-day historical trend." : "Overview of team member stability (details restricted)."}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -414,3 +433,4 @@ export default function TeamOverviewPage() {
     </div>
   );
 }
+

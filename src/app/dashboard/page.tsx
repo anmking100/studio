@@ -4,19 +4,15 @@
 import { FragmentationScoreCard } from "@/components/dashboard/fragmentation-score-card";
 import { FocusTrendsChart } from "@/components/dashboard/focus-trends-chart";
 import { AnomalyAlert } from "@/components/dashboard/anomaly-alert";
-import { mockFragmentationScores } from "@/lib/mock-data"; // Keep for trends chart and previous score
+import { mockFragmentationScores } from "@/lib/mock-data"; 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Lightbulb, CheckSquare, Loader2, AlertTriangle, Info, UserCheck } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { 
-  calculateFragmentationScore, 
-  type CalculateFragmentationScoreInput,
-  type CalculateFragmentationScoreOutput 
-} from "@/ai/flows/calculate-fragmentation-score";
-import type { GenericActivityItem } from "@/lib/types";
+import { calculateScoreAlgorithmically } from "@/lib/score-calculator";
+import type { CalculateFragmentationScoreInputType, CalculateFragmentationScoreOutput, GenericActivityItem } from "@/lib/types";
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -40,46 +36,41 @@ export default function DashboardPage() {
 
     if (user.role === 'hr') {
       setIsHrUser(true);
-      setIsLoadingScore(false);
-      setCurrentFragmentationData(null); // Ensure no score data is shown for HR
+      setIsLoadingScore(false); // HR doesn't get a personal score on this page
+      setCurrentFragmentationData(null); 
       return;
     }
     setIsHrUser(false);
+    setIsLoadingScore(true);
+    setScoreError(null);
 
-    const fetchScore = async () => {
-      setIsLoadingScore(true);
-      setScoreError(null);
+    // Mock activities for the logged-in user - replace with real data fetching later
+    const mockUserActivities: GenericActivityItem[] = [
+      { type: 'teams_meeting', timestamp: new Date(Date.now() - 2 * 3600000).toISOString(), details: 'Project Alpha Sync', source: 'm365' },
+      { type: 'jira_issue_task', timestamp: new Date(Date.now() - 1 * 3600000).toISOString(), details: 'Updated JIRA-123 to In Progress', source: 'jira' },
+      { type: 'other', timestamp: new Date(Date.now() - 0.5 * 3600000).toISOString(), details: 'Follow-up with client on proposal', source: 'm365' }, // Assuming 'm365' for email
+      { type: 'jira_issue_bug', timestamp: new Date(Date.now() - 3 * 3600000).toISOString(), details: 'Fix auth bug', source: 'jira' },
+      { type: 'teams_meeting', timestamp: new Date(Date.now() - 24 * 3600000).toISOString(), details: 'Daily Stand-up', source: 'm365' },
+    ];
 
-      // Mock activities - in a real app, this would be fetched from backend integrations
-      const mockActivities: GenericActivityItem[] = [
-        { type: 'meeting', timestamp: new Date(Date.now() - 2 * 3600000).toISOString(), details: 'Project Alpha Sync', source: 'teams' },
-        { type: 'task_update', timestamp: new Date(Date.now() - 1 * 3600000).toISOString(), details: 'Updated JIRA-123 to In Progress', source: 'jira' },
-        { type: 'email_sent', timestamp: new Date(Date.now() - 0.5 * 3600000).toISOString(), details: 'Follow-up with client on proposal', source: 'm365' },
-        { type: 'code_commit', timestamp: new Date(Date.now() - 3 * 3600000).toISOString(), details: 'Feature: User profile page', source: 'other' }, // Assuming 'other' for GitHub etc.
-        { type: 'meeting', timestamp: new Date(Date.now() - 24 * 3600000).toISOString(), details: 'Daily Stand-up', source: 'teams' },
-      ];
-
-      const input: CalculateFragmentationScoreInput = {
-        userId: user.id,
-        activityWindowDays: 1, // Looking at today's mock activities
-        activities: mockActivities,
-      };
-
-      try {
-        const result = await calculateFragmentationScore(input);
-        setCurrentFragmentationData(result);
-      } catch (err) {
-        console.error("Error calculating fragmentation score:", err);
-        setScoreError("Failed to calculate your fragmentation score. Please try again later.");
-      } finally {
-        setIsLoadingScore(false);
-      }
+    const input: CalculateFragmentationScoreInputType = {
+      userId: user.id,
+      activityWindowDays: 1, // Consider activities for the last day for this example
+      activities: mockUserActivities,
     };
 
-    fetchScore();
+    try {
+      const result = calculateScoreAlgorithmically(input);
+      setCurrentFragmentationData(result);
+    } catch (err) {
+      console.error("Error calculating fragmentation score (algorithmic):", err);
+      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
+      setScoreError(`Failed to calculate your fragmentation score: ${errorMessage}`);
+    } finally {
+      setIsLoadingScore(false);
+    }
   }, [user]);
   
-  // Use last 14 days of data for the chart
   const recentFragmentationScores = mockFragmentationScores.slice(-14);
   const previousScore = recentFragmentationScores.length > 1 ? recentFragmentationScores.slice(-2)[0].score : undefined;
 
@@ -93,7 +84,7 @@ export default function DashboardPage() {
                 Welcome back, {user?.name?.split(" ")[0] || "User"}!
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                {isHrUser ? "Manage your team's focus overview." : "Here's your personalized focus overview."}
+                {isHrUser ? "Manage your team's focus overview from the 'Team Overview' page." : "Here's your personalized focus overview."}
               </CardDescription>
             </div>
             <Image 
@@ -127,12 +118,12 @@ export default function DashboardPage() {
             {!isLoadingScore && !scoreError && currentFragmentationData && (
               <FragmentationScoreCard 
                 currentScore={currentFragmentationData.fragmentationScore} 
-                previousScore={previousScore}
+                previousScore={previousScore} // Still using mock previous score for trend
                 riskLevel={currentFragmentationData.riskLevel}
                 summary={currentFragmentationData.summary}
               />
             )}
-             {!isLoadingScore && !scoreError && !currentFragmentationData && !isHrUser && (
+             {!isLoadingScore && !scoreError && !currentFragmentationData && !isHrUser && ( // Should not happen if calculation completes
                <Card className="shadow-lg flex flex-col items-center justify-center min-h-[200px] text-center p-4">
                   <Info className="h-8 w-8 text-muted-foreground mb-2" />
                   <CardTitle className="text-lg">Fragmentation Score</CardTitle>
@@ -141,6 +132,10 @@ export default function DashboardPage() {
              )}
           </div>
           <div className="lg:col-span-2">
+            {/* AnomalyAlert uses mockFragmentationScores which includes AI-like scores.
+                This might be inconsistent with the algorithmic score.
+                Consider removing or adapting AnomalyAlert if this discrepancy is an issue.
+            */}
             <AnomalyAlert fragmentationScores={recentFragmentationScores} />
           </div>
         </div>
@@ -151,7 +146,7 @@ export default function DashboardPage() {
             <UserCheck className="h-5 w-5 text-blue-600 dark:text-blue-500" />
             <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">HR Dashboard View</AlertTitle>
             <AlertDescription className="text-blue-600 dark:text-blue-500">
-                Your personal fragmentation score is not displayed here. Please use the "Team Overview" page to view and manage team member focus data.
+                Your personal fragmentation score is not displayed here. Please use the "Team Overview" page to view team member focus data calculated using the new algorithmic method.
             </AlertDescription>
         </Alert>
       )}
@@ -159,7 +154,7 @@ export default function DashboardPage() {
       {!isHrUser && currentFragmentationData && !isLoadingScore && !scoreError && (
         <Card className="shadow-md hover:shadow-lg transition-shadow duration-300">
           <CardHeader>
-            <CardTitle className="text-xl font-semibold">AI Focus Summary</CardTitle>
+            <CardTitle className="text-xl font-semibold">Algorithmic Focus Summary</CardTitle>
           </CardHeader>
           <CardContent>
             <AlertDescription className="text-muted-foreground whitespace-pre-wrap">{currentFragmentationData.summary}</AlertDescription>
@@ -174,7 +169,8 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      {!isHrUser && <FocusTrendsChart data={recentFragmentationScores} />}
+      {/* FocusTrendsChart uses mockFragmentationScores. This might be inconsistent. */}
+      {!isHrUser && <FocusTrendsChart data={recentFragmentationScores} />} 
       
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <Card className="shadow-md hover:shadow-lg transition-shadow duration-300">
@@ -198,7 +194,7 @@ export default function DashboardPage() {
           <CardContent className="space-y-2">
             <p className="text-muted-foreground">What would you like to do?</p>
             <ul className="list-disc list-inside text-primary space-y-1">
-                <li><a href="/task-batching" className="hover:underline">Suggest task batching</a></li>
+                <li><a href="/task-batching" className="hover:underline">Suggest task batching (AI)</a></li>
                 {!isHrUser && <li><a href="#" className="hover:underline opacity-50 cursor-not-allowed">Log focused work session (soon)</a></li>}
                 {isHrUser && <li><a href="/team-overview" className="hover:underline">View Team Overview</a></li>}
                 <li><a href="#" className="hover:underline opacity-50 cursor-not-allowed">Review daily goals (soon)</a></li>
@@ -209,4 +205,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
