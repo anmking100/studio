@@ -5,6 +5,9 @@ export interface User {
   email: string;
   role: 'developer' | 'hr';
   avatarUrl?: string;
+  // Optional: Store external system IDs if needed for direct API calls for this user
+  jiraAccountId?: string;
+  teamsUserId?: string;
 }
 
 export interface FragmentationDataPoint {
@@ -13,16 +16,14 @@ export interface FragmentationDataPoint {
 }
 
 export interface TeamMemberFocus extends User {
-  fragmentationScore: number;
-  lastWeekTrend: number; // e.g. -0.5, +1.2
-  overloadStatus: 'Stable' | 'At Risk' | 'Overloaded';
+  fragmentationScore: number; // This will eventually be dynamically calculated
+  lastWeekTrend: number; // e.g. -0.5, +1.2 (could also be calculated)
+  overloadStatus: 'Stable' | 'At Risk' | 'Overloaded'; // Could be derived from score
 }
 
 export interface Task {
   id: string;
   description: string;
-  // Source could be added if needed for more context in task batching
-  // source?: 'Jira' | 'Git' | 'Calendar' | 'Slack' | 'Teams' | 'Other';
 }
 
 export interface MicrosoftGraphLicense {
@@ -30,8 +31,32 @@ export interface MicrosoftGraphLicense {
   disabledPlans: string[];
 }
 export interface MicrosoftGraphUser {
-  id: string;
+  id:string;
   displayName: string | null;
   userPrincipalName: string;
   assignedLicenses: MicrosoftGraphLicense[];
+}
+
+// Generic activity item for the new Genkit flow
+export interface GenericActivityItem {
+  type: string; // e.g., 'meeting', 'task_update', 'commit', 'chat_message'
+  timestamp: string; // ISO 8601 datetime string
+  details?: string; // Brief description
+  source: 'teams' | 'jira' | 'm365' | 'github' | 'other'; // Source system
+  // Potentially add: duration, participants, project, etc. depending on type
+}
+
+// Input for the fragmentation score calculation flow
+export interface CalculateFragmentationScoreInputType {
+  userId: string;
+  activityWindowDays: number; // e.g., 7 for last 7 days
+  activities: GenericActivityItem[];
+}
+
+// Output from the fragmentation score calculation flow
+export interface CalculateFragmentationScoreOutputType {
+  userId: string;
+  fragmentationScore: number; // 0-5
+  summary: string; // Explanation of the score
+  riskLevel: 'Low' | 'Moderate' | 'High';
 }

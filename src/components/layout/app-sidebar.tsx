@@ -13,22 +13,47 @@ import {
   SidebarMenuButton,
   SidebarMenuSkeleton,
   useSidebar,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
-import { LayoutDashboard, Users, ListChecks, Settings, LogOut, ExternalLink, Briefcase } from "lucide-react";
+import { LayoutDashboard, Users, ListChecks, Settings, LogOut, ExternalLink, Briefcase, Cog } from "lucide-react"; // Added Cog
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { Package } from "lucide-react"; // Example icon for Teams
+import { Atlassian } from "lucide-react"; // Example icon for Jira, if available, else use generic
+
+// Helper to create a generic icon if specific one isn't in lucide
+const JiraIcon = () => (
+  <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor">
+    <path d="M12.296 2.017L2.078 6.075a.302.302 0 00-.197.355l4.08 13.536a.301.301 0 00.353.198l10.22-4.057a.302.302 0 00.197-.355L12.647 2.215a.304.304 0 00-.35-.198zm-.39 1.408l8.315 3.3-3.29 10.92-8.313-3.3zm-1.02 8.13l-2.057-.816 1.24-4.122 2.056.816z"></path>
+  </svg>
+);
+
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/team-overview", label: "Team Overview", icon: Users },
-  { href: "/task-batching", label: "Task Batching", icon: ListChecks },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, group: "Main" },
+  { href: "/team-overview", label: "Team Overview", icon: Users, group: "Main" },
+  { href: "/task-batching", label: "Task Batching", icon: ListChecks, group: "Main" },
   { 
     href: "/integrations/microsoft-graph", 
     label: "MS Graph Users", 
     icon: Briefcase,
+    group: "Integrations" 
+  },
+  { 
+    href: "/integrations/teams", 
+    label: "Teams", 
+    icon: Package, // Using Package as a placeholder for Teams icon
+    group: "Integrations" 
+  },
+   { 
+    href: "/integrations/jira", 
+    label: "Jira", 
+    icon: JiraIcon,
     group: "Integrations" 
   },
 ];
@@ -37,7 +62,7 @@ export function AppSidebar() {
   const pathname = usePathname();
   const { user, logout, loading: authLoading } = useAuth();
   const router = useRouter();
-  const { state: sidebarState } = useSidebar(); // Get sidebar collapsed state
+  const { state: sidebarState } = useSidebar();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -49,8 +74,18 @@ export function AppSidebar() {
     router.push("/login");
   };
 
+  // Group navigation items
+  const groupedNavItems = navItems.reduce((acc, item) => {
+    const group = item.group || "Main";
+    if (!acc[group]) {
+      acc[group] = [];
+    }
+    acc[group].push(item);
+    return acc;
+  }, {} as Record<string, typeof navItems>);
+
+
   if (!mounted || authLoading) {
-    // Show skeleton while loading to prevent hydration mismatch or flashing
     return (
       <Sidebar collapsible="icon">
         <SidebarHeader>
@@ -78,24 +113,35 @@ export function AppSidebar() {
         <Logo collapsed={sidebarState === 'collapsed'} />
       </SidebarHeader>
       <SidebarContent className="flex-grow p-2">
-        <SidebarMenu>
-          {navItems.map((item) => (
-            <SidebarMenuItem key={item.href}>
-              <Link href={item.href} passHref legacyBehavior>
-                <SidebarMenuButton
-                  isActive={pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href))}
-                  tooltip={{ children: item.label, className: "bg-popover text-popover-foreground" }}
-                >
-                  <item.icon className="h-5 w-5" />
-                  <span className="truncate">{item.label}</span>
-                </SidebarMenuButton>
-              </Link>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
+        {Object.entries(groupedNavItems).map(([groupName, items], index) => (
+          <SidebarGroup key={groupName} className="p-0">
+            {groupName !== "Main" && (
+              <>
+              {index > 0 && <SidebarSeparator className="my-2" />}
+              <SidebarGroupLabel className="text-xs font-semibold text-sidebar-foreground/60 px-2 pt-2 group-data-[collapsible=icon]:hidden">
+                {groupName}
+              </SidebarGroupLabel>
+              </>
+            )}
+             <SidebarMenu className="mt-1">
+              {items.map((item) => (
+                <SidebarMenuItem key={item.href}>
+                  <Link href={item.href} passHref legacyBehavior>
+                    <SidebarMenuButton
+                      isActive={pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href))}
+                      tooltip={{ children: item.label, className: "bg-popover text-popover-foreground" }}
+                    >
+                      <item.icon className="h-5 w-5" />
+                      <span className="truncate">{item.label}</span>
+                    </SidebarMenuButton>
+                  </Link>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
       <SidebarFooter className="mt-auto border-t border-sidebar-border p-2">
-        {/* Placeholder for potential future items or just a logout button */}
         <SidebarMenu>
            <SidebarMenuItem>
                 <SidebarMenuButton
