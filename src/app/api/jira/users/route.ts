@@ -42,11 +42,7 @@ export async function GET(request: NextRequest) {
   }
   console.log("JIRA USERS API: Environment variables for Jira connection appear to be set.");
 
-  // The Jira API for finding users is typically /rest/api/3/user/search
-  // An empty query can list users, but it's often paginated and might be restricted.
-  // For simplicity, we'll try a broad search. Max results can be controlled.
-  // query="" is a common way to list users. Add maxResults for safety.
-  const maxResults = 50; // Limit the number of users for this demo page
+  const maxResults = 50; 
   const apiUrl = `${JIRA_INSTANCE_URL}/rest/api/3/user/search?query=&maxResults=${maxResults}`;
   
   console.log(`JIRA USERS API: Constructed API URL: ${apiUrl}`);
@@ -77,22 +73,25 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const data: JiraApiUser[] = await response.json(); // The endpoint returns an array of users directly
+    const data: JiraApiUser[] = await response.json(); 
     
     if (data && data.length > 0) {
-        console.log(`JIRA USERS API: SUCCESS - Found ${data.length} raw Jira users.`);
-        // Filter for active users as inactive users might also be returned
-        const activeApiUsers = data.filter(user => user.active);
-        console.log(`JIRA USERS API: Filtered to ${activeApiUsers.length} active Jira users.`);
-        if (activeApiUsers.length > 0) {
-            console.log(`JIRA USERS API: Sample raw active user: AccountID - ${activeApiUsers[0].accountId}, DisplayName - "${activeApiUsers[0].displayName}", Email - ${activeApiUsers[0].emailAddress}`);
+        console.log(`JIRA USERS API: SUCCESS - Found ${data.length} raw Jira accounts from API.`);
+        
+        // Filter for active users AND users with an email address
+        const actualUsers = data.filter(user => user.active && user.emailAddress && user.emailAddress.trim() !== '');
+        console.log(`JIRA USERS API: Filtered to ${actualUsers.length} active Jira users with email addresses.`);
+
+        if (actualUsers.length > 0) {
+            console.log(`JIRA USERS API: Sample filtered active user: AccountID - ${actualUsers[0].accountId}, DisplayName - "${actualUsers[0].displayName}", Email - ${actualUsers[0].emailAddress}`);
         }
-        const users: JiraUser[] = activeApiUsers.map(mapJiraApiUserToJiraUser);
-        console.log(`JIRA USERS API: Mapped ${users.length} active users to JiraUser format.`);
+        
+        const users: JiraUser[] = actualUsers.map(mapJiraApiUserToJiraUser);
+        console.log(`JIRA USERS API: Mapped ${users.length} filtered users to JiraUser format.`);
         console.log("JIRA USERS API HANDLER: --- END (Success) ---");
         return NextResponse.json(users);
     } else {
-        console.log(`JIRA USERS API: INFO - Successfully connected to Jira, but NO Jira users found for the query or no active users.`);
+        console.log(`JIRA USERS API: INFO - Successfully connected to Jira, but NO Jira accounts found for the query or no active users with email addresses.`);
         console.log("JIRA USERS API HANDLER: --- END (Success - No Users) ---");
         return NextResponse.json([]);
     }
