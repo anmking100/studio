@@ -10,7 +10,7 @@ const RISK_THRESHOLDS = {
 // Define weights for different factors
 const FACTOR_WEIGHTS = {
   MEETING: 0.4, // Score per meeting
-  JIRA_TASK_UPDATE: 0.4, // Score per Jira task update - UPDATED from 0.15
+  JIRA_TASK_UPDATE: 1.0, // Score per Jira task update - UPDATED from 0.4
   SOURCE_SWITCH: 0.25, // Score per switch between different sources (e.g., Jira to Teams)
   TYPE_SWITCH_SAME_SOURCE: 0.1, // Score per switch between different activity types within the same source
   MULTI_PLATFORM_USAGE_BONUS: 0.5, // Bonus if > 2 sources are used
@@ -25,8 +25,8 @@ interface ContributingFactors {
   typeSwitches: number;
   multiplePlatformsUsed: boolean;
   highActivityDensityPeriods: number;
-  activitiesProcessed: number; 
-  [key: string]: number | boolean; 
+  activitiesProcessed: number;
+  [key: string]: number | boolean;
 }
 
 export function calculateScoreAlgorithmically(
@@ -37,7 +37,7 @@ export function calculateScoreAlgorithmically(
   if (!activities || activities.length === 0) {
     return {
       userId,
-      fragmentationScore: 0.0, // Score is 0.0 if no activities
+      fragmentationScore: 0.0,
       summary: `No activities tracked for this period.`,
       riskLevel: 'Low',
       activitiesCount: 0,
@@ -86,6 +86,7 @@ export function calculateScoreAlgorithmically(
         contributingFactors.typeSwitches++;
       }
     }
+    // Only update previousActivity if it's not a presence update, to avoid presence updates masking actual task switches
     if (activity.type !== 'teams_presence_update') {
         previousActivity = activity;
     }
@@ -98,17 +99,16 @@ export function calculateScoreAlgorithmically(
   }
   
   // Adjust activity density calculation for the window
-  const hourlyActivityThreshold = FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD / (activityWindowDays * 24); // Example: activities per hour
-  // This part needs a more sophisticated way to check density over time windows,
-  // for now, let's simplify or base it on total activities in the window
-  if (activities.length > FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD * activityWindowDays) { // This checks total activities vs threshold scaled by days
+  // This simple check scales the threshold by the number of days in the window.
+  // A more sophisticated approach might look at activities per hour or specific time blocks.
+  if (activities.length > FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD * activityWindowDays) { 
     score += FACTOR_WEIGHTS.ACTIVITY_DENSITY_BONUS;
-    contributingFactors.highActivityDensityPeriods = 1; // Simplified representation
+    contributingFactors.highActivityDensityPeriods = 1; // Simplified: flag if overall density is high
   }
 
-  // Nudge score up if there's activity but score is still very low
-  // Changed from 0.5 for "no activity" to 0.0.
-  // If score is 0 but activities exist, bump to a minimal 0.1
+  // Nudge score up if there's activity but score is still very low (e.g. only presence updates)
+  // Ensure it's differentiated from a true "no activity" score of 0.0.
+  // Changed: if score is 0 but activities exist, bump to a minimal 0.1
   if (activities.length > 0 && score > 0 && score < 0.1) { 
     score = 0.1; 
   } else if (activities.length > 0 && score === 0.0) { 
@@ -150,6 +150,7 @@ export function calculateScoreAlgorithmically(
       summaryParts.push(`periods of high activity density`);
     }
 
+    // Default summary part if others are empty but score is not minimal for zero activity
     if (summaryParts.length === 0 && finalScore <= 1.0 && finalScore >= 0.0) { // Adjusted to include 0.0 if activities > 0
         summaryParts.push("low overall activity levels.");
     } else if (summaryParts.length === 0 && finalScore > 1.0) {
@@ -160,10 +161,10 @@ export function calculateScoreAlgorithmically(
   let summary = `Score of ${finalScore} (${riskLevel}). `;
   if (summaryParts.length > 0 && !(finalScore === 0.0 && activities.length === 0)) { 
      summary += "Key factors: " + summaryParts.join(', ') + ".";
-  } else if (activities.length > 0 && finalScore >= 0.0) { // Adjusted to include 0.0
+  } else if (activities.length > 0 && finalScore >= 0.0) { // For cases where activities are present but don't trigger specific summary parts (e.g. only presence updates)
     summary += "Calculated based on general activity level."
   } else if (finalScore === 0.0 && activities.length === 0) {
-    // The initial summary part already covers this.
+    // The initial summary part "No activities..." already covers this.
   }
 
 
@@ -175,4 +176,3 @@ export function calculateScoreAlgorithmically(
     activitiesCount: activities.length,
   };
 }
-
