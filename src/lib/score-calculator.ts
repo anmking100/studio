@@ -37,7 +37,7 @@ export function calculateScoreAlgorithmically(
   if (!activities || activities.length === 0) {
     return {
       userId,
-      fragmentationScore: 0.0,
+      fragmentationScore: 0.0, // Score is 0.0 if no activities
       summary: `No activities tracked for this period.`,
       riskLevel: 'Low',
       activitiesCount: 0,
@@ -69,8 +69,9 @@ export function calculateScoreAlgorithmically(
     }
 
     // Jira Task Updates
+    // THIS IS WHERE JIRA DATA IS USED FOR SCORING
     if (activity.source === 'jira' && activity.type.startsWith('jira_issue')) {
-      console.log(`SCORE_CALC: Processing Jira activity for user ${userId}: ${activity.details}`); // Added log
+      console.log(`SCORE_CALC: Processing Jira activity for user ${userId}: ${activity.details}`);
       score += FACTOR_WEIGHTS.JIRA_TASK_UPDATE;
       contributingFactors.jiraTaskUpdates++;
     }
@@ -96,20 +97,24 @@ export function calculateScoreAlgorithmically(
     contributingFactors.multiplePlatformsUsed = true;
   }
   
-  if (activities.length > FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD * activityWindowDays) {
+  // Adjust activity density calculation for the window
+  const hourlyActivityThreshold = FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD / (activityWindowDays * 24); // Example: activities per hour
+  // This part needs a more sophisticated way to check density over time windows,
+  // for now, let's simplify or base it on total activities in the window
+  if (activities.length > FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD * activityWindowDays) { // This checks total activities vs threshold scaled by days
     score += FACTOR_WEIGHTS.ACTIVITY_DENSITY_BONUS;
-    contributingFactors.highActivityDensityPeriods = 1; 
+    contributingFactors.highActivityDensityPeriods = 1; // Simplified representation
   }
 
-  score = Math.min(5.0, Math.max(0.0, score));
+  // Nudge score up if there's activity but score is still very low
   if (activities.length > 0 && score > 0 && score < 0.6) { 
     score = 0.6; 
-  } else if (activities.length > 0 && score === 0.0) { // If logic results in 0 with activities, nudge up
-    score = 0.1;
+  } else if (activities.length > 0 && score === 0.0) { // If logic somehow results in 0 with activities
+    score = 0.1; // Give a minimal score to differentiate from truly no activity
   }
 
 
-  const finalScore = parseFloat(score.toFixed(1));
+  const finalScore = parseFloat(Math.min(5.0, Math.max(0.0, score)).toFixed(1));
 
   let riskLevel: 'Low' | 'Moderate' | 'High';
   if (finalScore >= RISK_THRESHOLDS.HIGH) {
@@ -123,9 +128,6 @@ export function calculateScoreAlgorithmically(
   let summaryParts: string[] = [];
   if (finalScore === 0.0 && activities.length === 0) {
      summaryParts.push(`No activities tracked for this period.`);
-  } else if (finalScore <= 0.5 && activities.length > 0 && !Object.values(contributingFactors).some(v => typeof v === 'number' && v > 0) && contributingFactors.jiraTaskUpdates === 0 && contributingFactors.meetings === 0){
-    // This condition might be too complex now, simplify
-    summaryParts.push("Minimal activity detected, resulting in a low score.");
   } else {
     if (contributingFactors.jiraTaskUpdates > 0) {
       summaryParts.push(`${contributingFactors.jiraTaskUpdates} Jira task activit${contributingFactors.jiraTaskUpdates === 1 ? 'y' : 'ies'}`);
@@ -154,10 +156,12 @@ export function calculateScoreAlgorithmically(
   }
   
   let summary = `Score of ${finalScore} (${riskLevel}). `;
-  if (summaryParts.length > 0) {
+  if (summaryParts.length > 0 && !(finalScore === 0.0 && activities.length === 0)) { // Avoid "Key factors" if no activity
      summary += "Key factors: " + summaryParts.join(', ') + ".";
-  } else if (activities.length > 0) { 
+  } else if (activities.length > 0 && finalScore > 0.0) { 
     summary += "Calculated based on general activity level."
+  } else if (finalScore === 0.0 && activities.length === 0) {
+    // The initial summary part already covers this.
   }
 
 
