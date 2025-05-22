@@ -65,16 +65,23 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
     return errorMsg.includes("429 Too Many Requests") || errorMsg.includes("exceeded your current quota");
   };
 
-  let errorTitle = "Error Processing";
-  let errorDescription = "An error occurred while calculating scores.";
+  let errorTitle = "Error Processing Data";
+  let errorDescription = "An error occurred while fetching activities or calculating scores.";
+  let displayErrorIcon = AlertTriangle;
+
   if (scoreError) {
     if (isRateLimitError(scoreError)) {
       errorTitle = "AI Rate Limit Reached";
       errorDescription = "Too many requests to the AI model. Please try again later or reduce the number of historical days processed.";
-      StatusIcon = Zap; // Using Zap icon for rate limit
+      displayErrorIcon = Zap;
     } else if (isAiOverloadedError(scoreError)) {
       errorTitle = "AI Model Busy";
       errorDescription = "The AI model is temporarily overloaded. Please try again.";
+      displayErrorIcon = Zap; // Or another icon if you prefer for busy
+    } else {
+      // For other errors, including Jira fetch errors, display the scoreError directly
+      errorTitle = "Data Processing Error";
+      errorDescription = scoreError; // Display the specific error message
     }
   }
 
@@ -100,9 +107,9 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
           </div>
         ) : scoreError && showDetailedScore ? (
           <div className="flex flex-col items-center justify-center flex-grow text-destructive p-2 text-center">
-            {isRateLimitError(scoreError) ? <Zap className="h-8 w-8 mb-2" /> : <AlertTriangle className="h-8 w-8 mb-2" />}
+            <displayErrorIcon className="h-8 w-8 mb-2" />
             <p className="text-sm font-semibold">{errorTitle}</p>
-            <p className="text-xs mt-1">{errorDescription}</p>
+            <p className="text-xs mt-1 whitespace-pre-wrap">{errorDescription.length > 150 ? errorDescription.substring(0, 150) + "..." : errorDescription}</p>
             <div className="mt-2 flex gap-2">
                 <TooltipProvider>
                     <Tooltip delayDuration={100}>
@@ -144,7 +151,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
                   <TooltipTrigger asChild>
                     <div className="mt-2 text-xs text-muted-foreground flex items-center cursor-help hover:text-primary transition-colors">
                       <Info className="h-3.5 w-3.5 mr-1 shrink-0" />
-                      <span className="truncate">Current AI Insights (hover)</span>
+                      <span className="truncate">Current Algorithmic Summary (hover)</span>
                     </div>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" align="start" className="max-w-xs bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
@@ -204,4 +211,3 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
     </Card>
   );
 }
-
