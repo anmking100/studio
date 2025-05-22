@@ -4,7 +4,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, AlertTriangle, ListChecks, CalendarDays, Search } from "lucide-react";
@@ -22,8 +21,7 @@ const JiraIcon = () => (
   </svg>
 );
 
-export default function JiraRawIssuesPage() {
-  const [userEmail, setUserEmail] = useState("");
+export default function JiraAllRawIssuesPage() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
     const today = new Date();
     return {
@@ -36,10 +34,6 @@ export default function JiraRawIssuesPage() {
   const [error, setError] = useState<string | null>(null);
 
   const handleFetchRawIssues = async () => {
-    if (!userEmail.trim()) {
-      setError("Please enter a user email.");
-      return;
-    }
     if (!dateRange?.from || !dateRange?.to) {
       setError("Please select a valid date range.");
       return;
@@ -51,7 +45,6 @@ export default function JiraRawIssuesPage() {
 
     try {
       const params = new URLSearchParams({
-        userEmail: userEmail,
         startDate: dateRange.from.toISOString(),
         endDate: dateRange.to.toISOString(),
       });
@@ -78,10 +71,10 @@ export default function JiraRawIssuesPage() {
             <JiraIcon />
             <div>
               <CardTitle className="text-3xl font-bold text-primary-foreground">
-                Jira Raw Issues Viewer
+                All Assigned Jira Issues Viewer
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Inspect the raw JSON data for issues fetched from your Jira instance.
+                Inspect raw JSON data for all assigned issues within a date range from your Jira instance.
               </CardDescription>
             </div>
           </div>
@@ -91,20 +84,9 @@ export default function JiraRawIssuesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Query Parameters</CardTitle>
-          <CardDescription>Specify user email and date range to fetch raw Jira issues.</CardDescription>
+          <CardDescription>Specify a date range to fetch all assigned Jira issues.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="userEmail">User Email (Jira Assignee)</Label>
-            <Input
-              id="userEmail"
-              type="email"
-              placeholder="user@example.com"
-              value={userEmail}
-              onChange={(e) => setUserEmail(e.target.value)}
-              className="mt-1"
-            />
-          </div>
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
               <Label>Start Date</Label>
@@ -157,7 +139,7 @@ export default function JiraRawIssuesPage() {
             ) : (
               <Search className="mr-2 h-4 w-4" />
             )}
-            Fetch Raw Jira Issues
+            Fetch All Assigned Jira Issues
           </Button>
         </CardFooter>
       </Card>
@@ -180,7 +162,7 @@ export default function JiraRawIssuesPage() {
           <CardHeader>
             <CardTitle>Raw Jira Issues Data</CardTitle>
             <CardDescription>
-              Found {rawIssues.length} issue(s) matching your criteria. Displaying the raw JSON response.
+              Found {rawIssues.length} assigned issue(s) matching your criteria. Displaying the raw JSON response.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -193,9 +175,9 @@ export default function JiraRawIssuesPage() {
             ) : (
               <Alert>
                 <ListChecks className="h-4 w-4" />
-                <AlertTitle>No Issues Found</AlertTitle>
+                <AlertTitle>No Assigned Issues Found</AlertTitle>
                 <AlertDescription>
-                  No Jira issues were found matching the specified user email and date range. Check your inputs or the Jira API logs.
+                  No assigned Jira issues were found matching the specified date range. Check your date range or the Jira API logs.
                 </AlertDescription>
               </Alert>
             )}
