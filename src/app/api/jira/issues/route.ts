@@ -1,43 +1,88 @@
 
 import {NextRequest, NextResponse} from 'next/server';
+import type { GenericActivityItem } from '@/lib/types';
 
-// Placeholder for Jira API integration
-// This would typically involve using Jira's REST API with API token authentication.
+const JIRA_INSTANCE_URL = process.env.JIRA_INSTANCE_URL;
+const JIRA_USERNAME = process.env.JIRA_USERNAME; // Basic auth username (often email)
+const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN; // Jira API Token
 
-// const JIRA_INSTANCE_URL = process.env.JIRA_INSTANCE_URL;
-// const JIRA_USERNAME = process.env.JIRA_USERNAME; // Basic auth username (often email)
-// const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN; // Jira API Token
+interface JiraIssue {
+  key: string;
+  fields: {
+    summary: string;
+    status: {
+      name: string;
+    };
+    updated: string; // ISO 8601 datetime string
+    issuetype: {
+      name: string;
+    };
+    priority?: {
+      name: string;
+    };
+    labels?: string[];
+  };
+}
+
+function mapJiraIssueToActivity(issue: JiraIssue): GenericActivityItem {
+  return {
+    type: `jira_issue_${issue.fields.issuetype.name.toLowerCase().replace(/\s+/g, '_')}`, // e.g., jira_issue_bug, jira_issue_story
+    timestamp: issue.fields.updated,
+    details: `[${issue.key}] ${issue.fields.summary} (Status: ${issue.fields.status.name})`,
+    source: 'jira',
+  };
+}
 
 export async function GET(request: NextRequest) {
-  // const { searchParams } = new URL(request.url);
-  // const userJiraAccountId = searchParams.get('userJiraAccountId'); // Jira account ID of the user
+  const { searchParams } = new URL(request.url);
+  const userEmail = searchParams.get('userEmail');
 
-  // if (!JIRA_INSTANCE_URL || !JIRA_USERNAME || !JIRA_API_TOKEN) {
-  //   return NextResponse.json(
-  //     { error: "Jira API integration not configured on server." },
-  //     { status: 500 }
-  //   );
-  // }
+  if (!JIRA_INSTANCE_URL || !JIRA_USERNAME || !JIRA_API_TOKEN) {
+    console.error("Jira API integration not configured on server. Missing JIRA_INSTANCE_URL, JIRA_USERNAME, or JIRA_API_TOKEN.");
+    return NextResponse.json(
+      { error: "Jira API integration not configured on server. Admin needs to set environment variables." },
+      { status: 503 } // Service Unavailable
+    );
+  }
 
-  // if (!userJiraAccountId) {
-  //   return NextResponse.json({ error: "Jira User Account ID is required." }, { status: 400 });
-  // }
+  if (!userEmail) {
+    return NextResponse.json({ error: "Jira User Email (userEmail) is required." }, { status: 400 });
+  }
   
-  // TODO: Implement actual Jira API call
-  // 1. Construct JQL query to fetch issues assigned to or recently updated by the user.
-  //    Example JQL: `assignee = "${userJiraAccountId}" AND updated >= -7d ORDER BY updated DESC`
-  // 2. Make request to Jira API: `${JIRA_INSTANCE_URL}/rest/api/3/search?jql=${encodeURIComponent(jql)}`
-  // 3. Authenticate using Basic Auth with JIRA_USERNAME and JIRA_API_TOKEN (base64 encoded).
-  //    Headers: { 'Authorization': `Basic ${Buffer.from(`${JIRA_USERNAME}:${JIRA_API_TOKEN}`).toString('base64')}` }
+  const jql = `assignee = "${userEmail}" AND updated >= -7d ORDER BY updated DESC`;
+  const apiUrl = `${JIRA_INSTANCE_URL}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=summary,status,updated,issuetype,priority,labels`;
 
-  // For now, return mock data or "not implemented"
-  console.warn("Jira issues API called, but not fully implemented. Returning mock data.");
-  return NextResponse.json({
-    message: "Jira issues API - Not fully implemented. This is placeholder data.",
-    userJiraAccountId: "mockJiraUser", // Replace with actual userJiraAccountId
-    mockIssues: [
-      { issueKey: "PROJ-123", summary: "Fix login bug", status: "In Progress", updatedAt: new Date().toISOString(), source: "jira" },
-      { issueKey: "PROJ-456", summary: "Develop new feature", status: "To Do", updatedAt: new Date(Date.now() - 86400000).toISOString(), source: "jira" },
-    ]
-  });
+  try {
+    console.log(`Fetching Jira issues for ${userEmail} from ${apiUrl}`);
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${Buffer.from(`${JIRA_USERNAME}:${JIRA_API_TOKEN}`).toString('base64')}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Jira API error for ${userEmail}: Status ${response.status}, Body: ${errorText}`);
+      throw new Error(`Jira API request failed with status ${response.status}: ${errorText.substring(0, 200)}`);
+    }
+
+    const data = await response.json();
+    const issues: JiraIssue[] = data.issues || [];
+    console.log(`Found ${issues.length} Jira issues for ${userEmail}.`);
+
+    const activities: GenericActivityItem[] = issues.map(mapJiraIssueToActivity);
+    return NextResponse.json(activities);
+
+  } catch (error: any) {
+    console.error(`Error fetching Jira issues for ${userEmail}:`, error.message);
+    return NextResponse.json(
+        { 
+            error: `Failed to retrieve Jira issues for ${userEmail}: ${error.message}. Ensure Jira credentials and instance URL are correct and the user email is valid in Jira.`,
+            details: error.toString()
+        }, 
+        { status: 500 }
+    );
+  }
 }

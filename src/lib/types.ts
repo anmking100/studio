@@ -1,4 +1,5 @@
 
+
 export interface User {
   id: string;
   name: string;
@@ -6,8 +7,8 @@ export interface User {
   role: 'developer' | 'hr';
   avatarUrl?: string;
   // Optional: Store external system IDs if needed for direct API calls for this user
-  jiraAccountId?: string;
-  teamsUserId?: string;
+  jiraAccountId?: string; // This might be the email or a specific Jira ID
+  teamsUserId?: string; // This is usually the MS Graph User ID
 }
 
 export interface FragmentationDataPoint {
@@ -17,18 +18,26 @@ export interface FragmentationDataPoint {
   riskLevel?: 'Low' | 'Moderate' | 'High'; // AI assessed risk level
 }
 
-export interface TeamMemberFocus extends User {
-  // Original mock data fields - can be used as fallback or initial state
-  fragmentationScore: number; 
-  lastWeekTrend: number; 
-  overloadStatus: 'Stable' | 'At Risk' | 'Overloaded'; 
+export interface TeamMemberFocus {
+  id: string; // Microsoft Graph User ID
+  name: string;
+  email: string; // userPrincipalName from MS Graph
+  role: 'developer' | 'hr'; // Derived or default
+  avatarUrl?: string;
 
-  // Fields for dynamically loaded AI scores
+  // Fields for dynamically loaded AI scores based on fetched activities
+  fragmentationScore?: number; // Can be undefined until calculated
+  lastWeekTrend: number; // Mocked or calculated based on historical data later
+  
   aiCalculatedScore?: number;
   aiSummary?: string;
   aiRiskLevel?: 'Low' | 'Moderate' | 'High';
-  isLoadingScore?: boolean;
+  
+  isLoadingScore: boolean;
   scoreError?: string | null;
+  activities?: GenericActivityItem[]; // Store fetched activities
+  activityError?: string | null; // Store errors from fetching activities
+  isLoadingActivities?: boolean;
 }
 
 export interface Task {
@@ -49,7 +58,7 @@ export interface MicrosoftGraphUser {
 
 // Generic activity item for the new Genkit flow
 export interface GenericActivityItem {
-  type: string; // e.g., 'meeting', 'task_update', 'commit', 'chat_message'
+  type: string; // e.g., 'meeting', 'task_update', 'commit', 'chat_message', 'jira_issue_bug', 'teams_presence_update', 'teams_meeting'
   timestamp: string; // ISO 8601 datetime string
   details?: string; // Brief description
   source: 'teams' | 'jira' | 'm365' | 'github' | 'other'; // Source system
