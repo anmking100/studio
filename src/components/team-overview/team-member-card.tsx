@@ -1,7 +1,7 @@
 
 "use client";
 
-import type { TeamMemberFocus, CalculateFragmentationScoreOutput } from "@/lib/types";
+import type { TeamMemberFocus, CalculateFragmentationScoreOutput, HistoricalScore } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -9,8 +9,9 @@ import { UserCircle, AlertTriangle, ShieldCheck, Activity, Loader2, Info, Briefc
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, startOfDay } from 'date-fns';
 import { MemberHistoricalChart } from "./member-historical-chart";
+import { useMemo } from "react";
 
 interface TeamMemberCardProps {
   member: TeamMemberFocus;
@@ -25,10 +26,11 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
     name,
     avatarUrl,
     currentDayScoreData,
-    historicalScores,
+    // historicalScores is used below to construct chartPoints
     averageHistoricalScore,
     isLoadingScore,
-    scoreError
+    scoreError,
+    activityError, // For current day activity fetching errors
   } = member;
 
   const mainScore = showDetailedScore && currentDayScoreData ? currentDayScoreData.fragmentationScore : 0;
@@ -38,36 +40,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
 
   let StatusIcon = ShieldCheck;
   let statusText = mainRiskLevel as string;
-
-  // If scoreError is present, and it's not just a "no activity" case for a successful calculation
-  if (scoreError && currentDayScoreData?.fragmentationScore === undefined) { // Only override risk if score itself failed
-    mainRiskLevel = 'Error'; // A pseudo risk level for error display
-    statusText = 'Error';
-    StatusIcon = AlertTriangle;
-  } else if (mainRiskLevel === 'Low') { statusText = 'Stable'; StatusIcon = ShieldCheck; }
-  else if (mainRiskLevel === 'Moderate') { statusText = 'At Risk'; StatusIcon = Activity; }
-  else if (mainRiskLevel === 'High') { statusText = 'Overloaded'; StatusIcon = AlertTriangle; }
-  else { statusText = 'Stable'; StatusIcon = ShieldCheck; }
-
-
-  const getStatusBadgeClasses = (status: string): string => {
-    if (status === "Stable") return "border-green-500 text-green-600 dark:border-green-400 dark:text-green-500 bg-green-500/10";
-    if (status === "At Risk") return "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-500 bg-yellow-500/10";
-    if (status === "Overloaded") return "border-destructive text-destructive bg-destructive/10";
-    if (status === "Error") return "border-destructive text-destructive bg-destructive/10"; // For error status
-    return "border-muted text-muted-foreground";
-  };
-
-  const scorePercentage = (mainScore / 5) * 100;
-  let progressIndicatorClassName = "bg-green-500";
-  if (mainRiskLevel === 'High') {
-    progressIndicatorClassName = "bg-destructive";
-  } else if (mainRiskLevel === 'Moderate') {
-    progressIndicatorClassName = "bg-yellow-500";
-  } else if (mainRiskLevel === 'Error') {
-    progressIndicatorClassName = "bg-destructive";
-  }
-
+  let DisplayErrorIcon = AlertTriangle;
 
   const isRateLimitError = (errorMsg?: string | null): boolean => {
     if (!errorMsg) return false;
@@ -81,41 +54,86 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
     return lowerError.includes("model is overloaded") || lowerError.includes("503 service unavailable");
   };
 
-
   let errorTitle = "Data Processing Error";
-  let errorDescription = scoreError;
-  let DisplayErrorIcon = AlertTriangle; // Capitalized
+  let errorDescription = scoreError || activityError;
 
-  if (scoreError) {
-    if (isRateLimitError(scoreError)) {
+  if (scoreError || activityError) {
+    const combinedError = [scoreError, activityError].filter(Boolean).join("; ");
+    if (isRateLimitError(combinedError)) {
       errorTitle = "API Rate Limit Reached";
       errorDescription = "Too many requests to an external service. Please try again later.";
       DisplayErrorIcon = Zap;
-    } else if (isModelOverloadedError(scoreError)) {
+    } else if (isModelOverloadedError(combinedError)) {
       errorTitle = "AI Model Busy";
       errorDescription = "The AI model is temporarily overloaded. Please try again later.";
       DisplayErrorIcon = Zap;
     } else {
-      // For other errors, use the scoreError directly for the description if it's shorter,
-      // or a generic message if it's very long.
-      errorDescription = scoreError; // Show the actual error from the backend
+      errorDescription = combinedError;
     }
   }
 
+
+  if (!isLoadingScore && !errorDescription && currentDayScoreData) { // No errors, data is present
+    if (mainRiskLevel === 'Low') { statusText = 'Stable'; StatusIcon = ShieldCheck; }
+    else if (mainRiskLevel === 'Moderate') { statusText = 'At Risk'; StatusIcon = Activity; }
+    else if (mainRiskLevel === 'High') { statusText = 'Overloaded'; StatusIcon = AlertTriangle; }
+  } else if (isLoadingScore) {
+    statusText = 'Loading'; // Will be replaced by loader
+  } else { // Error state
+    statusText = 'Error';
+    StatusIcon = AlertTriangle;
+  }
+
+
+  const getStatusBadgeClasses = (status: string): string => {
+    if (status === "Stable") return "border-green-500 text-green-600 dark:border-green-400 dark:text-green-500 bg-green-500/10";
+    if (status === "At Risk") return "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-500 bg-yellow-500/10";
+    if (status === "Overloaded") return "border-destructive text-destructive bg-destructive/10";
+    if (status === "Error") return "border-destructive text-destructive bg-destructive/10"; 
+    return "border-muted text-muted-foreground";
+  };
+
+  const scorePercentage = (mainScore / 5) * 100;
+  let progressIndicatorClassName = "bg-green-500";
+  if (mainRiskLevel === 'High') {
+    progressIndicatorClassName = "bg-destructive";
+  } else if (mainRiskLevel === 'Moderate') {
+    progressIndicatorClassName = "bg-yellow-500";
+  } else if (mainRiskLevel === 'Error') {
+    progressIndicatorClassName = "bg-destructive";
+  }
+
   const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Ensure the click is not on a button or a tooltip trigger within the card
     if (e.target instanceof HTMLElement && (e.target.closest('button') || e.target.closest('[role="tooltip"]'))) {
       return;
     }
-    if (onViewDetails && showDetailedScore && !isLoadingScore) {
+    if (onViewDetails && showDetailedScore && !isLoadingScore && !errorDescription) {
       onViewDetails(member);
     }
   };
   
-  const cardClassName = `shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[320px] sm:min-h-[350px] ${onViewDetails && showDetailedScore && !isLoadingScore && !scoreError ? 'cursor-pointer' : ''}`;
+  const cardClassName = `shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[320px] sm:min-h-[350px] ${onViewDetails && showDetailedScore && !isLoadingScore && !errorDescription ? 'cursor-pointer' : ''}`;
+
+  const chartPoints: HistoricalScore[] = useMemo(() => {
+    const points: HistoricalScore[] = [...(member.historicalScores || [])];
+    if (member.currentDayScoreData && currentScoreDate) {
+        points.push({
+            date: format(startOfDay(currentScoreDate), 'yyyy-MM-dd'), // Use the currentScoreDate
+            score: member.currentDayScoreData.fragmentationScore,
+            riskLevel: member.currentDayScoreData.riskLevel,
+            summary: member.currentDayScoreData.summary,
+            activitiesCount: member.currentDayScoreData.activitiesCount,
+            activityError: member.activityError || undefined, // Use the general activity error for this day
+        });
+    }
+    // Sort again to ensure chronological order if currentScoreDate was earlier than some historical dates (unlikely with current logic but safe)
+    // or if historicalScores was empty.
+    return points.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [member.historicalScores, member.currentDayScoreData, currentScoreDate, member.activityError]);
+
 
   return (
-    <Card className={cardClassName} onClick={!scoreError ? handleCardClick : undefined}>
+    <Card className={cardClassName} onClick={!errorDescription ? handleCardClick : undefined}>
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
         <div className="flex-1 min-w-0">
           <CardTitle className="text-md font-medium truncate" title={name}>{name}</CardTitle>
@@ -133,12 +151,12 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
             <p className="text-sm text-center">Calculating score...</p>
             <p className="text-xs text-center">(Fetching & processing activities)</p>
           </div>
-        ) : scoreError && showDetailedScore ? (
+        ) : errorDescription && showDetailedScore ? (
           <div className="flex flex-col items-center justify-center flex-grow text-destructive p-2 text-center">
             <DisplayErrorIcon className="h-8 w-8 mb-2" />
             <p className="text-sm font-semibold">{errorTitle}</p>
             <p className="text-xs mt-1">
-              {errorDescription}
+              {errorDescription.length > 150 ? errorDescription.substring(0,150) + "..." : errorDescription}
             </p>
             <div className="mt-2 flex gap-2">
               <TooltipProvider>
@@ -147,7 +165,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
                      <Button variant="outline" size="sm" className="text-xs h-auto px-2 py-1 border-destructive text-destructive hover:bg-destructive/10" onClick={(e) => e.stopPropagation()}>Details</Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-md bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
-                    {scoreError}
+                    {errorDescription}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -165,10 +183,10 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
               <div className="flex items-center justify-between mb-1">
                 <Badge variant="outline" className={getStatusBadgeClasses(statusText)}>
                   <StatusIcon className="mr-1 h-3.5 w-3.5" />
-                  {statusText} (Daily Score)
+                  {statusText} (Score {currentScoreDate ? `for ${format(currentScoreDate, 'MMM d')}` : ''})
                 </Badge>
                 <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Score ({currentScoreDate ? format(currentScoreDate, 'MMM d') : 'Daily'})</p>
+                    <p className="text-xs text-muted-foreground">Score {currentScoreDate ? `(${format(currentScoreDate, 'MMM d')})` : ''}</p>
                   <p className="text-2xl font-bold text-primary">{mainScore.toFixed(1)}</p>
                 </div>
               </div>
@@ -182,7 +200,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
                   <TooltipTrigger asChild>
                     <div className="mt-1 text-xs text-muted-foreground flex items-center cursor-help hover:text-primary transition-colors" onClick={(e) => e.stopPropagation()}>
                       <Info className="h-3.5 w-3.5 mr-1 shrink-0" />
-                      <span className="truncate">Daily Score Summary (hover)</span>
+                      <span className="truncate">Score Summary (hover)</span>
                     </div>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" align="start" className="max-w-xs bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
@@ -192,20 +210,22 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
               </TooltipProvider>
             )}
 
-            {historicalScores && historicalScores.length > 0 && (
+            {chartPoints && chartPoints.length > 0 && (
               <div className="mt-2 pt-2 border-t border-border">
                 <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
                   <div className="flex items-center gap-1">
                     <LineChart className="h-4 w-4" />
-                    <span>Historical Trend ({historicalScores.length}-day avg):</span>
+                    <span>Historical Trend ({chartPoints.length}-day avg):</span>
                   </div>
-                  <span className="font-semibold text-foreground">{averageHistoricalScore?.toFixed(1) ?? "N/A"}</span>
+                  <span className="font-semibold text-foreground">
+                    {averageHistoricalScore !== undefined && averageHistoricalScore !== null ? averageHistoricalScore.toFixed(1) : "N/A"}
+                  </span>
                 </div>
-                <MemberHistoricalChart historicalData={historicalScores} />
+                <MemberHistoricalChart historicalData={chartPoints} />
               </div>
             )}
-            {historicalScores && historicalScores.length === 0 && !isLoadingScore && (
-              <p className="text-xs text-muted-foreground mt-2 text-center">No historical daily scores to display for selected range.</p>
+            {(!chartPoints || chartPoints.length === 0) && !isLoadingScore && (
+              <p className="text-xs text-muted-foreground mt-2 text-center">No historical trend data to display.</p>
             )}
             {onViewDetails && (
                 <Button variant="outline" size="sm" className="w-full mt-2 text-xs" onClick={(e) => { e.stopPropagation(); handleCardClick(e); }}>
@@ -228,3 +248,5 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
     </Card>
   );
 }
+
+    
