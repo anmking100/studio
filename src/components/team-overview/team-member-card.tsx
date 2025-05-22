@@ -32,22 +32,29 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
   } = member;
 
   const mainScore = showDetailedScore && currentDayScoreData ? currentDayScoreData.fragmentationScore : 0;
-  const mainRiskLevel = showDetailedScore && currentDayScoreData ? currentDayScoreData.riskLevel : 'Low';
+  let mainRiskLevel = showDetailedScore && currentDayScoreData ? currentDayScoreData.riskLevel : 'Low';
   const mainSummary = showDetailedScore && currentDayScoreData ? currentDayScoreData.summary : undefined;
   const mainActivitiesCount = showDetailedScore && currentDayScoreData ? currentDayScoreData.activitiesCount : 0;
 
   let StatusIcon = ShieldCheck;
   let statusText = mainRiskLevel as string;
 
-  if (mainRiskLevel === 'Low') { statusText = 'Stable'; StatusIcon = ShieldCheck; }
+  // If scoreError is present, and it's not just a "no activity" case for a successful calculation
+  if (scoreError && currentDayScoreData?.fragmentationScore === undefined) { // Only override risk if score itself failed
+    mainRiskLevel = 'Error'; // A pseudo risk level for error display
+    statusText = 'Error';
+    StatusIcon = AlertTriangle;
+  } else if (mainRiskLevel === 'Low') { statusText = 'Stable'; StatusIcon = ShieldCheck; }
   else if (mainRiskLevel === 'Moderate') { statusText = 'At Risk'; StatusIcon = Activity; }
   else if (mainRiskLevel === 'High') { statusText = 'Overloaded'; StatusIcon = AlertTriangle; }
-  else { statusText = 'Stable'; StatusIcon = ShieldCheck; } 
+  else { statusText = 'Stable'; StatusIcon = ShieldCheck; }
+
 
   const getStatusBadgeClasses = (status: string): string => {
     if (status === "Stable") return "border-green-500 text-green-600 dark:border-green-400 dark:text-green-500 bg-green-500/10";
     if (status === "At Risk") return "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-500 bg-yellow-500/10";
     if (status === "Overloaded") return "border-destructive text-destructive bg-destructive/10";
+    if (status === "Error") return "border-destructive text-destructive bg-destructive/10"; // For error status
     return "border-muted text-muted-foreground";
   };
 
@@ -57,7 +64,10 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
     progressIndicatorClassName = "bg-destructive";
   } else if (mainRiskLevel === 'Moderate') {
     progressIndicatorClassName = "bg-yellow-500";
+  } else if (mainRiskLevel === 'Error') {
+    progressIndicatorClassName = "bg-destructive";
   }
+
 
   const isRateLimitError = (errorMsg?: string | null): boolean => {
     if (!errorMsg) return false;
@@ -65,38 +75,47 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
     return lowerError.includes("429") || lowerError.includes("quota exceeded") || lowerError.includes("rate limit");
   };
 
-  const isAiOverloadedError = (errorMsg?: string | null): boolean => { 
+  const isModelOverloadedError = (errorMsg?: string | null): boolean => {
     if (!errorMsg) return false;
     const lowerError = errorMsg.toLowerCase();
     return lowerError.includes("model is overloaded") || lowerError.includes("503 service unavailable");
   };
 
+
   let errorTitle = "Data Processing Error";
   let errorDescription = scoreError;
-  let displayErrorIcon = AlertTriangle;
+  let DisplayErrorIcon = AlertTriangle; // Capitalized
 
   if (scoreError) {
     if (isRateLimitError(scoreError)) {
       errorTitle = "API Rate Limit Reached";
-      errorDescription = "Too many requests to an external service. Please try again later or select a smaller date range.";
-      displayErrorIcon = Zap;
-    } else if (isAiOverloadedError(scoreError)) {
+      errorDescription = "Too many requests to an external service. Please try again later.";
+      DisplayErrorIcon = Zap;
+    } else if (isModelOverloadedError(scoreError)) {
       errorTitle = "AI Model Busy";
-      errorDescription = "An AI model is temporarily overloaded. Please try again.";
-      displayErrorIcon = Zap;
+      errorDescription = "The AI model is temporarily overloaded. Please try again later.";
+      DisplayErrorIcon = Zap;
+    } else {
+      // For other errors, use the scoreError directly for the description if it's shorter,
+      // or a generic message if it's very long.
+      errorDescription = scoreError; // Show the actual error from the backend
     }
   }
 
-  const handleCardClick = () => {
+  const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Ensure the click is not on a button or a tooltip trigger within the card
+    if (e.target instanceof HTMLElement && (e.target.closest('button') || e.target.closest('[role="tooltip"]'))) {
+      return;
+    }
     if (onViewDetails && showDetailedScore && !isLoadingScore) {
       onViewDetails(member);
     }
   };
   
-  const cardClassName = `shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[320px] sm:min-h-[350px] ${onViewDetails && showDetailedScore && !isLoadingScore ? 'cursor-pointer' : ''}`;
+  const cardClassName = `shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[320px] sm:min-h-[350px] ${onViewDetails && showDetailedScore && !isLoadingScore && !scoreError ? 'cursor-pointer' : ''}`;
 
   return (
-    <Card className={cardClassName} onClick={handleCardClick}>
+    <Card className={cardClassName} onClick={!scoreError ? handleCardClick : undefined}>
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
         <div className="flex-1 min-w-0">
           <CardTitle className="text-md font-medium truncate" title={name}>{name}</CardTitle>
@@ -111,12 +130,12 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
         {isLoadingScore && showDetailedScore ? (
           <div className="flex flex-col items-center justify-center flex-grow text-muted-foreground">
             <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-            <p className="text-sm text-center">Processing score...</p>
-            <p className="text-xs text-center">(Fetching daily activities)</p>
+            <p className="text-sm text-center">Calculating score...</p>
+            <p className="text-xs text-center">(Fetching & processing activities)</p>
           </div>
         ) : scoreError && showDetailedScore ? (
           <div className="flex flex-col items-center justify-center flex-grow text-destructive p-2 text-center">
-            <displayErrorIcon className="h-8 w-8 mb-2" />
+            <DisplayErrorIcon className="h-8 w-8 mb-2" />
             <p className="text-sm font-semibold">{errorTitle}</p>
             <p className="text-xs mt-1">
               {errorDescription}
@@ -189,7 +208,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetai
               <p className="text-xs text-muted-foreground mt-2 text-center">No historical daily scores to display for selected range.</p>
             )}
             {onViewDetails && (
-                <Button variant="outline" size="sm" className="w-full mt-2 text-xs" onClick={(e) => { e.stopPropagation(); handleCardClick(); }}>
+                <Button variant="outline" size="sm" className="w-full mt-2 text-xs" onClick={(e) => { e.stopPropagation(); handleCardClick(e); }}>
                     <Eye className="mr-2 h-3.5 w-3.5" /> View Activities
                 </Button>
             )}
