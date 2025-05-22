@@ -9,7 +9,7 @@
  */
 
 import {ai} from '@/ai/genkit';
-import {z} from 'genkit';
+import {z} from 'zod';
 
 // Define more specific activity types as integrations are built
 const GenericActivityItemSchema = z.object({
@@ -19,7 +19,8 @@ const GenericActivityItemSchema = z.object({
   source: z.enum(["teams", "jira", "m365", "other"]).describe("Source of the activity data")
 });
 
-export const CalculateFragmentationScoreInputSchema = z.object({
+// Schema is NOT exported directly
+const CalculateFragmentationScoreInputSchema = z.object({
   userId: z.string().describe("The ID of the user whose activity is being analyzed."),
   activityWindowDays: z.number().default(7).describe("The number of days of activity to consider (e.g., last 7 days)."),
   activities: z.array(GenericActivityItemSchema).describe("A list of user activities from various sources like Teams, Jira, etc."),
@@ -29,7 +30,8 @@ export const CalculateFragmentationScoreInputSchema = z.object({
 });
 export type CalculateFragmentationScoreInput = z.infer<typeof CalculateFragmentationScoreInputSchema>;
 
-export const CalculateFragmentationScoreOutputSchema = z.object({
+// Schema is NOT exported directly
+const CalculateFragmentationScoreOutputSchema = z.object({
   userId: z.string().describe("The ID of the user."),
   fragmentationScore: z.number().min(0).max(5).describe("Calculated cognitive fragmentation score (0-5, higher is more fragmented)."),
   summary: z.string().describe("A brief explanation of the score, highlighting key contributing factors."),
