@@ -6,13 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, ListChecks, CalendarDays, Search } from "lucide-react";
+import { Loader2, AlertTriangle, ListChecks, CalendarDays, Search, TableIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import type { DateRange } from "react-day-picker";
-import { format, startOfDay, subDays, endOfDay } from "date-fns";
+import { format, startOfDay, subDays, endOfDay, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { JiraIssue } from "@/lib/types";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const JiraIcon = () => (
@@ -29,11 +30,11 @@ export default function JiraAllRawIssuesPage() {
       to: endOfDay(today),
     };
   });
-  const [rawIssues, setRawIssues] = useState<JiraIssue[] | null>(null);
+  const [issues, setIssues] = useState<JiraIssue[] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleFetchRawIssues = async () => {
+  const handleFetchIssues = async () => {
     if (!dateRange?.from || !dateRange?.to) {
       setError("Please select a valid date range.");
       return;
@@ -41,7 +42,7 @@ export default function JiraAllRawIssuesPage() {
 
     setIsLoading(true);
     setError(null);
-    setRawIssues(null);
+    setIssues(null);
 
     try {
       const params = new URLSearchParams({
@@ -52,14 +53,23 @@ export default function JiraAllRawIssuesPage() {
       const responseData = await response.json();
 
       if (!response.ok) {
-        throw new Error(responseData.error || responseData.details || `Failed to fetch raw Jira issues: ${response.statusText}`);
+        throw new Error(responseData.error || responseData.details || `Failed to fetch Jira issues: ${response.statusText}`);
       }
-      setRawIssues(responseData as JiraIssue[]);
+      setIssues(responseData as JiraIssue[]);
     } catch (err: any) {
-      console.error("Error fetching raw Jira issues:", err);
+      console.error("Error fetching Jira issues:", err);
       setError(err.message || "An unknown error occurred.");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return "N/A";
+    try {
+      return format(parseISO(dateString), "MMM dd, yyyy HH:mm");
+    } catch (e) {
+      return dateString; // Return original if parsing fails
     }
   };
 
@@ -71,10 +81,10 @@ export default function JiraAllRawIssuesPage() {
             <JiraIcon />
             <div>
               <CardTitle className="text-3xl font-bold text-primary-foreground">
-                All Assigned Jira Issues Viewer
+                All Assigned Jira Issues
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Inspect raw JSON data for all assigned issues within a date range from your Jira instance.
+                View details of all assigned issues within a selected date range from your Jira instance.
               </CardDescription>
             </div>
           </div>
@@ -89,15 +99,16 @@ export default function JiraAllRawIssuesPage() {
         <CardContent className="space-y-4">
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
-              <Label>Start Date</Label>
+              <Label htmlFor="start-date-popover">Start Date</Label>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
+                    id="start-date-popover"
                     variant={"outline"}
                     className={cn("w-full justify-start text-left font-normal mt-1", !dateRange?.from && "text-muted-foreground")}
                   >
                     <CalendarDays className="mr-2 h-4 w-4" />
-                    {dateRange?.from ? format(dateRange.from, "LLL dd, y") : <span>Pick a start date</span>}
+                    {dateRange?.from ? format(dateRange.from, "LLL dd, yyyy") : <span>Pick a start date</span>}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
@@ -110,15 +121,16 @@ export default function JiraAllRawIssuesPage() {
               </Popover>
             </div>
             <div className="flex-1">
-              <Label>End Date</Label>
+              <Label htmlFor="end-date-popover">End Date</Label>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
+                    id="end-date-popover"
                     variant={"outline"}
                     className={cn("w-full justify-start text-left font-normal mt-1", !dateRange?.to && "text-muted-foreground")}
                   >
                     <CalendarDays className="mr-2 h-4 w-4" />
-                    {dateRange?.to ? format(dateRange.to, "LLL dd, y") : <span>Pick an end date</span>}
+                    {dateRange?.to ? format(dateRange.to, "LLL dd, yyyy") : <span>Pick an end date</span>}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
@@ -133,7 +145,7 @@ export default function JiraAllRawIssuesPage() {
           </div>
         </CardContent>
         <CardFooter>
-          <Button onClick={handleFetchRawIssues} disabled={isLoading}>
+          <Button onClick={handleFetchIssues} disabled={isLoading}>
             {isLoading ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -147,7 +159,7 @@ export default function JiraAllRawIssuesPage() {
       {isLoading && (
         <div className="flex items-center justify-center p-8">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="ml-2 text-muted-foreground">Fetching raw issues...</p>
+          <p className="ml-2 text-muted-foreground">Fetching issues...</p>
         </div>
       )}
       {error && (
@@ -157,20 +169,51 @@ export default function JiraAllRawIssuesPage() {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      {rawIssues !== null && !isLoading && (
+      {issues !== null && !isLoading && (
         <Card>
           <CardHeader>
-            <CardTitle>Raw Jira Issues Data</CardTitle>
+             <div className="flex items-center gap-2">
+                <TableIcon className="h-6 w-6 text-primary" />
+                <CardTitle>Jira Issues Details</CardTitle>
+            </div>
             <CardDescription>
-              Found {rawIssues.length} assigned issue(s) matching your criteria. Displaying the raw JSON response.
+              Found {issues.length} assigned issue(s) matching your criteria.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {rawIssues.length > 0 ? (
-              <ScrollArea className="h-[500px] w-full rounded-md border p-4 bg-muted/30">
-                <pre className="text-xs whitespace-pre-wrap break-all">
-                  {JSON.stringify(rawIssues, null, 2)}
-                </pre>
+            {issues.length > 0 ? (
+              <ScrollArea className="h-[600px] w-full rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[100px]">Key</TableHead>
+                      <TableHead>Summary</TableHead>
+                      <TableHead>Assignee</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead>Last Updated</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {issues.map((issue) => (
+                      <TableRow key={issue.id}>
+                        <TableCell className="font-medium">{issue.key}</TableCell>
+                        <TableCell>{issue.fields.summary}</TableCell>
+                        <TableCell>{issue.fields.assignee?.displayName || "Unassigned"}</TableCell>
+                        <TableCell>
+                           <span className="px-2 py-1 text-xs font-medium rounded-full bg-muted text-muted-foreground">
+                            {issue.fields.status.name}
+                           </span>
+                        </TableCell>
+                        <TableCell>{issue.fields.issuetype.name}</TableCell>
+                        <TableCell className="text-xs">{formatDate(issue.fields.created)}</TableCell>
+                        <TableCell className="text-xs">{formatDate(issue.fields.updated)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {issues.length > 10 && <TableCaption>Scroll to see all {issues.length} issues.</TableCaption>}
               </ScrollArea>
             ) : (
               <Alert>
