@@ -18,9 +18,17 @@ export interface FragmentationDataPoint {
 }
 
 export interface TeamMemberFocus extends User {
-  fragmentationScore: number; // This will eventually be dynamically calculated
-  lastWeekTrend: number; // e.g. -0.5, +1.2 (could also be calculated)
-  overloadStatus: 'Stable' | 'At Risk' | 'Overloaded'; // Could be derived from score
+  // Original mock data fields - can be used as fallback or initial state
+  fragmentationScore: number; 
+  lastWeekTrend: number; 
+  overloadStatus: 'Stable' | 'At Risk' | 'Overloaded'; 
+
+  // Fields for dynamically loaded AI scores
+  aiCalculatedScore?: number;
+  aiSummary?: string;
+  aiRiskLevel?: 'Low' | 'Moderate' | 'High';
+  isLoadingScore?: boolean;
+  scoreError?: string | null;
 }
 
 export interface Task {

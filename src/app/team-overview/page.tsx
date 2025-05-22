@@ -1,22 +1,89 @@
+
 "use client";
 
+import { useEffect, useState } from "react";
 import { TeamMemberCard } from "@/components/team-overview/team-member-card";
-import { mockTeamData } from "@/lib/mock-data";
+import { mockTeamData as initialMockTeamData } from "@/lib/mock-data";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Users, BarChart3, ShieldAlert } from "lucide-react";
+import { Users, BarChart3, ShieldAlert, Loader2 } from "lucide-react";
 import Image from "next/image";
+import { 
+  calculateFragmentationScore, 
+  type CalculateFragmentationScoreInput,
+  type CalculateFragmentationScoreOutput 
+} from "@/ai/flows/calculate-fragmentation-score";
+import type { TeamMemberFocus, GenericActivityItem } from "@/lib/types";
+
+// Mock activities - in a real app, this would be fetched from backend integrations per user
+const getMockActivitiesForUser = (userId: string): GenericActivityItem[] => [
+  { type: 'meeting', timestamp: new Date(Date.now() - Math.random() * 5 * 24 * 3600000).toISOString(), details: `Sync for ${userId}`, source: 'teams' },
+  { type: 'task_update', timestamp: new Date(Date.now() - Math.random() * 3 * 24 * 3600000).toISOString(), details: `Updated JIRA-${Math.floor(Math.random()*100)}`, source: 'jira' },
+  { type: 'email_sent', timestamp: new Date(Date.now() - Math.random() * 2 * 24 * 3600000).toISOString(), details: 'Follow-up with client', source: 'm365' },
+  { type: 'code_commit', timestamp: new Date(Date.now() - Math.random() * 7 * 24 * 3600000).toISOString(), details: `Feature: ABC for ${userId}`, source: 'other' },
+];
+
 
 export default function TeamOverviewPage() {
   const { user } = useAuth();
   const isHR = user?.role === 'hr';
+  const [teamData, setTeamData] = useState<TeamMemberFocus[]>(
+    initialMockTeamData.map(member => ({ ...member, isLoadingScore: isHR, scoreError: null }))
+  );
+  const [isCalculatingAll, setIsCalculatingAll] = useState(isHR);
 
-  const teamStats = {
-    stable: mockTeamData.filter(m => m.overloadStatus === "Stable").length,
-    atRisk: mockTeamData.filter(m => m.overloadStatus === "At Risk").length,
-    overloaded: mockTeamData.filter(m => m.overloadStatus === "Overloaded").length,
-  };
+
+  useEffect(() => {
+    if (isHR) {
+      setIsCalculatingAll(true);
+      const fetchScoresForAllMembers = async () => {
+        const updatedTeamDataPromises = initialMockTeamData.map(async (member) => {
+          try {
+            const activities = getMockActivitiesForUser(member.id);
+            const input: CalculateFragmentationScoreInput = {
+              userId: member.id,
+              activityWindowDays: 7, // Example window
+              activities: activities,
+            };
+            const result = await calculateFragmentationScore(input);
+            return {
+              ...member,
+              aiCalculatedScore: result.fragmentationScore,
+              aiSummary: result.summary,
+              aiRiskLevel: result.riskLevel,
+              isLoadingScore: false,
+              scoreError: null,
+            };
+          } catch (err) {
+            console.error(`Error calculating score for ${member.name}:`, err);
+            return {
+              ...member,
+              isLoadingScore: false,
+              scoreError: "Failed to calculate score.",
+            };
+          }
+        });
+
+        const settledTeamData = await Promise.all(updatedTeamDataPromises);
+        setTeamData(settledTeamData);
+        setIsCalculatingAll(false);
+      };
+
+      fetchScoresForAllMembers();
+    }
+  }, [isHR]);
+  
+  const teamStats = teamData.reduce((acc, member) => {
+    const status = member.aiRiskLevel ? 
+                   (member.aiRiskLevel === 'Low' ? 'Stable' : member.aiRiskLevel === 'Moderate' ? 'At Risk' : 'Overloaded') 
+                   : member.overloadStatus;
+    if (status === "Stable") acc.stable++;
+    else if (status === "At Risk") acc.atRisk++;
+    else if (status === "Overloaded") acc.overloaded++;
+    return acc;
+  }, { stable: 0, atRisk: 0, overloaded: 0 });
+
 
   return (
     <div className="space-y-6">
@@ -47,6 +114,16 @@ export default function TeamOverviewPage() {
           <AlertTitle className="font-semibold text-accent">Privacy Notice</AlertTitle>
           <AlertDescription>
             To protect individual privacy, detailed fragmentation scores are only visible to HR personnel. You are seeing an anonymized overview.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {isHR && isCalculatingAll && (
+        <Alert variant="default" className="shadow-md border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400">
+          <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-500" />
+          <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Calculating Scores</AlertTitle>
+          <AlertDescription className="text-blue-600 dark:text-blue-500">
+            The AI is currently calculating fragmentation scores for all team members. This may take a moment...
           </AlertDescription>
         </Alert>
       )}
@@ -91,11 +168,11 @@ export default function TeamOverviewPage() {
             <BarChart3 className="h-6 w-6 text-primary" />
           </div>
           <CardDescription>
-            {isHR ? "Detailed view of each team member's focus status." : "Overview of team member stability."}
+            {isHR ? "Detailed view of each team member's AI-calculated focus status." : "Overview of team member stability."}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {mockTeamData.map((member) => (
+          {teamData.map((member) => (
             <TeamMemberCard key={member.id} member={member} showDetailedScore={isHR} />
           ))}
         </CardContent>
