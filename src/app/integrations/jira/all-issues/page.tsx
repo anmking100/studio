@@ -189,6 +189,7 @@ export default function JiraAllRawIssuesPage() {
                       <TableHead className="w-[100px]">Key</TableHead>
                       <TableHead>Summary</TableHead>
                       <TableHead>Assignee</TableHead>
+                      <TableHead>Assignee Email</TableHead> {/* New Column */}
                       <TableHead>Status</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead>Created</TableHead>
@@ -201,6 +202,7 @@ export default function JiraAllRawIssuesPage() {
                         <TableCell className="font-medium">{issue.key}</TableCell>
                         <TableCell>{issue.fields.summary}</TableCell>
                         <TableCell>{issue.fields.assignee?.displayName || "Unassigned"}</TableCell>
+                        <TableCell>{issue.fields.assignee?.emailAddress || "N/A"}</TableCell> {/* New Cell */}
                         <TableCell>
                            <span className="px-2 py-1 text-xs font-medium rounded-full bg-muted text-muted-foreground">
                             {issue.fields.status.name}
