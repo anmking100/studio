@@ -59,7 +59,7 @@ Activities:
   - Source: {{{source}}}, Type: {{{type}}}, Time: {{{timestamp}}}{{#if details}}, Details: {{{details}}}{{/if}}
   {{/each}}
 {{else}}
-  No specific activities provided. Consider this when scoring.
+  No specific activities provided.
 {{/if}}
 
 Consider the following factors when calculating the score:
@@ -77,7 +77,7 @@ Based on the score, determine a risk level:
 Output:
 Return a JSON object with 'userId', 'fragmentationScore' (float, 1 decimal place), 'summary' (a concise explanation for the score, mentioning key drivers), and 'riskLevel'.
 Ensure the score is strictly between 0 and 5.
-If no activities are provided, assign a baseline score reflecting uncertainty, perhaps in the low-moderate range (e.g., 2.0), and note the lack of data in the summary.
+If no activities are provided, assign a fragmentationScore of 0.5, a riskLevel of "Low", and a summary indicating that the score reflects a lack of tracked activity, which implies low current work-related fragmentation.
 Always use dot notation, never exponential notation for floating point numbers.
 `,
 });
@@ -94,12 +94,12 @@ const calculateFragmentationScoreFlow = ai.defineFlow(
 
     if (!output) {
         console.error(`LLM did not return a structured (or parsable) output for calculateFragmentationScoreFlow. UserID: ${input.userId}. Input activities count: ${input.activities.length}. Input details:`, JSON.stringify(input, null, 2));
-        const risk = input.activities.length === 0 ? "Moderate" : "High";
-        const score = input.activities.length === 0 ? 2.0 : 4.0;
+        const risk = input.activities.length === 0 ? "Low" : "High"; // Default to Low if no activities, High otherwise for parsing failure
+        const score = input.activities.length === 0 ? 0.5 : 4.0;
         return {
             userId: input.userId,
             fragmentationScore: score,
-            summary: "Could not reliably calculate fragmentation score: AI model did not return a valid structured output. A default score has been assigned based on activity count.",
+            summary: `Could not reliably calculate fragmentation score: AI model did not return a valid structured output. A default score has been assigned based on activity count (${input.activities.length > 0 ? 'some activities present' : 'no activities found'}).`,
             riskLevel: risk as "Low" | "Moderate" | "High",
         };
     }
@@ -121,6 +121,16 @@ const calculateFragmentationScoreFlow = ai.defineFlow(
         finalScore = 2.5; // Default score due to invalid type
         currentSummary = `AI model returned an invalid score value ('${output.fragmentationScore}'). Default score ${finalScore} assigned. Original summary: ${output.summary || 'N/A'}`;
         currentRiskLevel = finalScore <= 1.9 ? "Low" : finalScore <= 3.4 ? "Moderate" : "High";
+    }
+    
+    // If no activities were provided, ensure the AI (or our override) set it to Low/0.5
+    if (input.activities.length === 0) {
+        if (finalScore > 1.0 || currentRiskLevel !== "Low") { // If AI didn't follow 0-activity instruction
+            console.warn(`AI did not assign Low/low-score for 0 activities for user ${input.userId}. Overriding. AI output: score=${output.fragmentationScore}, risk=${output.riskLevel}`);
+            finalScore = 0.5;
+            currentRiskLevel = "Low";
+            currentSummary = "No work-related activities were tracked for this period. The low fragmentation score reflects this lack of activity, indicating minimal cognitive load from tracked work.";
+        }
     }
     
     // Final sanity check for NaN score
