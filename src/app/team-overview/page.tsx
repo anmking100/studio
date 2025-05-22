@@ -29,9 +29,9 @@ export default function TeamOverviewPage() {
   const [isLoadingAllJiraIssues, setIsLoadingAllJiraIssues] = useState(false);
   const [allJiraIssuesError, setAllJiraIssuesError] = useState<string | null>(null);
 
-  const [isLoadingUsers, setIsLoadingUsers] = useState(false); // For MS Graph users fetch
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [userFetchError, setUserFetchError] = useState<string | null>(null);
-  const [isProcessingMembers, setIsProcessingMembers] = useState(false); // For score calculation phase
+  const [isProcessingMembers, setIsProcessingMembers] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const [selectedUserForDetails, setSelectedUserForDetails] = useState<TeamMemberFocus | null>(null);
@@ -42,36 +42,58 @@ export default function TeamOverviewPage() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
     const today = new Date();
     return {
-      from: startOfDay(subDays(today, 6)),
-      to: today,
+      from: startOfDay(subDays(today, 6)), // Default to last 7 days including today
+      to: today, // End of today or current time if today
     };
   });
 
-  // Helper to fetch activities for a specific day and calculate score
   const fetchActivitiesAndCalculateDailyScore = useCallback(async (
     memberId: string,
     memberEmail: string | undefined,
     dayStart: Date,
-    dayEnd: Date, // This will be the end of the day, or current time if today
-    allJiraIssuesForFilter: JiraIssue[] | null // Pass the globally fetched Jira issues
+    dayEnd: Date,
+    allJiraIssuesForFilter: JiraIssue[] | null
   ): Promise<CalculateFragmentationScoreOutput | { error: string; details?: any; activitiesCount: number }> => {
-    console.log(`TEAM OVERVIEW (DailyScore): Fetching activities for member ${memberId} (${memberEmail || 'No Email'}) for period: ${dayStart.toISOString()} to ${dayEnd.toISOString()}`);
+    console.log(`TEAM OVERVIEW (DailyScore): Processing for member ${memberId} (${memberEmail || 'No Email'}) for period: ${dayStart.toISOString()} to ${dayEnd.toISOString()}`);
     let dailyActivities: GenericActivityItem[] = [];
     let activityFetchError: string | null = null;
 
     // Filter pre-fetched Jira Activities
+    console.log(`TEAM OVERVIEW (DailyScore) - JIRA PRE-FILTER: Member ${memberId}, Email: ${memberEmail}, DayStart: ${dayStart.toISOString()}, DayEnd: ${dayEnd.toISOString()}`);
+    if (allJiraIssuesForFilter) {
+      console.log(`TEAM OVERVIEW (DailyScore) - JIRA PRE-FILTER: Global Jira issues available, count: ${allJiraIssuesForFilter.length}`);
+    } else {
+      console.warn(`TEAM OVERVIEW (DailyScore) - JIRA PRE-FILTER: Global Jira issues list (allJiraIssuesForFilter) is null for member ${memberId}. Error during fetch might have occurred: ${allJiraIssuesError}`);
+    }
+    
     if (memberEmail && allJiraIssuesForFilter) {
+      const memberEmailLower = memberEmail.toLowerCase();
+      console.log(`TEAM OVERVIEW (DailyScore) - JIRA FILTERING: Processing for memberEmail (lower): ${memberEmailLower}`);
+
       const userJiraIssuesForDay = allJiraIssuesForFilter.filter(issue => {
-        const assigneeMatch = issue.fields.assignee?.emailAddress === memberEmail;
+        const issueAssigneeEmail = issue.fields.assignee?.emailAddress;
+        const issueAssigneeEmailLower = issueAssigneeEmail?.toLowerCase();
+        
+        const assigneeMatch = issueAssigneeEmailLower === memberEmailLower;
+        
         let dateMatch = false;
+        let parsedIssueUpdatedDate: Date | null = null;
         try {
-          const issueUpdatedDate = parseISO(issue.fields.updated);
-          dateMatch = isWithinInterval(issueUpdatedDate, { start: dayStart, end: dayEnd });
+          parsedIssueUpdatedDate = parseISO(issue.fields.updated);
+          dateMatch = isWithinInterval(parsedIssueUpdatedDate, { start: dayStart, end: dayEnd });
         } catch (e) {
-          console.warn(`Could not parse issue.fields.updated: ${issue.fields.updated} for issue ${issue.key}`);
+          console.warn(`TEAM OVERVIEW (DailyScore) - JIRA DATE PARSE ERROR: Could not parse issue.fields.updated: "${issue.fields.updated}" for issue ${issue.key}. Error: ${(e as Error).message}`);
         }
+
+        // Detailed log for each issue being considered
+        if (issueAssigneeEmailLower === memberEmailLower) { // Log only for potentially matching assignees to reduce noise
+             console.log(`TEAM OVERVIEW (DailyScore) - JIRA ISSUE CHECK: IssueKey=${issue.key}, IssueUpdated=${issue.fields.updated}, ParsedDate=${parsedIssueUpdatedDate?.toISOString()}, Assignee=${issueAssigneeEmail}(${issueAssigneeEmailLower}), AssigneeMatch=${assigneeMatch}, DateMatch=${dateMatch} (Range: ${dayStart.toISOString()} - ${dayEnd.toISOString()})`);
+        }
+
         return assigneeMatch && dateMatch;
       });
+
+      console.log(`TEAM OVERVIEW (DailyScore) - JIRA FILTERING RESULT: Found ${userJiraIssuesForDay.length} Jira issues for ${memberId} (${memberEmail}) on ${format(dayStart, 'yyyy-MM-dd')} after filtering global list.`);
 
       if (userJiraIssuesForDay.length > 0) {
         const mappedJiraActivities = userJiraIssuesForDay.map((issue): GenericActivityItem => ({
@@ -81,17 +103,19 @@ export default function TeamOverviewPage() {
           source: 'jira',
         }));
         dailyActivities.push(...mappedJiraActivities);
-        console.log(`TEAM OVERVIEW (DailyScore): Filtered ${mappedJiraActivities.length} Jira activities for ${memberId} for day ${format(dayStart, 'yyyy-MM-dd')} from global list.`);
+        console.log(`TEAM OVERVIEW (DailyScore) - JIRA MAPPED: Mapped ${mappedJiraActivities.length} Jira activities for ${memberId} for day ${format(dayStart, 'yyyy-MM-dd')}.`);
+        // Log details of specifically fetched Jira activities
+        console.log(`TEAM OVERVIEW (DailyScore): Specifically, ${mappedJiraActivities.length} JIRA activities were fetched for ${memberId} for day ${format(dayStart, "yyyy-MM-dd")}.`);
+
       }
     } else if (memberEmail && !allJiraIssuesForFilter && !isLoadingAllJiraIssues) {
-      // This case implies allJiraIssues might have had an error or returned empty
-      const jiraFilterErrorMsg = `Jira: Global Jira issues list not available for filtering. Error: ${allJiraIssuesError || 'No issues fetched'}`;
+      const jiraFilterErrorMsg = `Jira: Global Jira issues list not available for filtering. Error: ${allJiraIssuesError || 'No issues fetched from global source'}`;
       activityFetchError = (activityFetchError ? activityFetchError + "; " : "") + jiraFilterErrorMsg;
       console.warn(`TEAM OVERVIEW (DailyScore): ${jiraFilterErrorMsg} for ${memberId} on ${format(dayStart, 'yyyy-MM-dd')}`);
     }
 
 
-    // Fetch Teams Activities (remains the same)
+    // Fetch Teams Activities
     try {
       const teamsResponse = await fetch(`/api/teams/activity?userId=${encodeURIComponent(memberId)}&startDate=${encodeURIComponent(dayStart.toISOString())}&endDate=${encodeURIComponent(dayEnd.toISOString())}`, { cache: 'no-store' });
       if (teamsResponse.ok) {
@@ -121,14 +145,20 @@ export default function TeamOverviewPage() {
         activities: dailyActivities,
       };
       const result = calculateScoreAlgorithmically(input);
-      return activityFetchError ? { ...result, summary: `Note: Some activity data for this day might be missing. ${activityFetchError}. ${result.summary}` } : result;
+      // If there was a partial error fetching some activities, append it to the summary
+      if (activityFetchError && result.summary) {
+        return { ...result, summary: `Note: Some activity data for this day might be missing. Errors: ${activityFetchError}. Original Summary: ${result.summary}` };
+      } else if (activityFetchError) {
+         return { ...result, summary: `Note: Some activity data for this day might be missing. Errors: ${activityFetchError}.` };
+      }
+      return result;
     } catch (scoreErr: any) {
       const scoreErrorMessage = `Algorithmic score calc error for day ${format(dayStart, 'yyyy-MM-dd')}: ${scoreErr.message}`;
       console.error(`TEAM OVERVIEW (DailyScore): ${scoreErrorMessage}`, scoreErr);
       const baseErrorReturn = { error: activityFetchError ? `${activityFetchError}; ${scoreErrorMessage}` : scoreErrorMessage , details: {day: format(dayStart, 'yyyy-MM-dd')}, activitiesCount: dailyActivities.length };
       return baseErrorReturn;
     }
-  }, [isLoadingAllJiraIssues, allJiraIssuesError]); // Added dependencies
+  }, [allJiraIssuesError, isLoadingAllJiraIssues]);
 
 
   const processSingleMember = useCallback(async (
@@ -143,40 +173,50 @@ export default function TeamOverviewPage() {
     const historicalScoresData: HistoricalScore[] = [];
     let currentDayCalculatedScoreData: CalculateFragmentationScoreOutput | null = null;
 
+    // Calculate score for the main selected end date
     const mainDayStart = startOfDay(effectiveEndDateForRange);
-    const mainDayEnd = effectiveEndDateForRange; 
+    // If effectiveEndDateForRange is today, mainDayEnd should be currentSystemTimeWhenProcessingStarted
+    // Otherwise, it's the end of the day for effectiveEndDateForRange
+    const mainDayEnd = isEqual(startOfDay(effectiveEndDateForRange), startOfDay(currentSystemTimeWhenProcessingStarted))
+                       ? currentSystemTimeWhenProcessingStarted
+                       : endOfDay(effectiveEndDateForRange);
 
     console.log(`TEAM OVERVIEW (Member): Processing main day score for ${memberInput.name} for ${format(mainDayStart, 'yyyy-MM-dd')} up to ${format(mainDayEnd, 'HH:mm:ss')}`);
     const mainDayResult = await fetchActivitiesAndCalculateDailyScore(memberInput.id, memberInput.email, mainDayStart, mainDayEnd, globallyFetchedJiraIssues);
     
     if ('error' in mainDayResult) {
-      overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + `Score for ${format(effectiveEndDateForRange, 'yyyy-MM-dd')}: ${mainDayResult.error}`;
+      const errorMsg = `Score for ${format(effectiveEndDateForRange, 'yyyy-MM-dd')}: ${mainDayResult.error}`;
+      overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + errorMsg;
+      console.warn(`TEAM OVERVIEW (Member): Error for main day score for ${memberInput.name} on ${format(effectiveEndDateForRange, 'yyyy-MM-dd')}: ${mainDayResult.error}`);
     } else {
       currentDayCalculatedScoreData = mainDayResult;
+      console.log(`TEAM OVERVIEW (Member): Main day score for ${memberInput.name} on ${format(effectiveEndDateForRange, 'yyyy-MM-dd')}: Score=${mainDayResult.fragmentationScore}, Activities=${mainDayResult.activitiesCount}. Summary: ${mainDayResult.summary}`);
     }
 
+    // Calculate historical scores
     for (let i = 0; i < NUMBER_OF_HISTORICAL_DAYS_FOR_TREND; i++) {
-      const historicalDate = startOfDay(subDays(effectiveEndDateForRange, i + 1));
+      const historicalDateCandidate = subDays(startOfDay(effectiveEndDateForRange), i + 1); // Go back one day from the END date for first historical point
 
-      if (isBefore(historicalDate, startOfDay(effectiveStartDateForRange))) {
-        console.log(`TEAM OVERVIEW (Member): Historical date ${format(historicalDate, 'yyyy-MM-dd')} is before start date of range ${format(startOfDay(effectiveStartDateForRange), 'yyyy-MM-dd')}. Skipping further historical for ${memberInput.name}.`);
+      // Ensure historicalDateCandidate is not before effectiveStartDateForRange
+      if (isBefore(historicalDateCandidate, startOfDay(effectiveStartDateForRange))) {
+        console.log(`TEAM OVERVIEW (Member): Historical date ${format(historicalDateCandidate, 'yyyy-MM-dd')} is before start date of range ${format(startOfDay(effectiveStartDateForRange), 'yyyy-MM-dd')}. Skipping further historical for ${memberInput.name}.`);
         break;
       }
       
-      const historicalDayStart = startOfDay(historicalDate);
-      const historicalDayEnd = endOfDay(historicalDate); 
+      const historicalDayStart = startOfDay(historicalDateCandidate);
+      const historicalDayEnd = endOfDay(historicalDateCandidate); // Historical days are always full days
 
       console.log(`TEAM OVERVIEW (Member): Processing historical score for ${memberInput.name} for ${format(historicalDayStart, 'yyyy-MM-dd')}`);
       const historicalDayResult = await fetchActivitiesAndCalculateDailyScore(memberInput.id, memberInput.email, historicalDayStart, historicalDayEnd, globallyFetchedJiraIssues);
 
       if ('error' in historicalDayResult) {
-        const errorMsg = `Historical for ${format(historicalDate, 'yyyy-MM-dd')}: ${historicalDayResult.error}`;
+        const errorMsg = `Historical for ${format(historicalDateCandidate, 'yyyy-MM-dd')}: ${historicalDayResult.error}`;
         overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + errorMsg;
-        console.warn(`TEAM OVERVIEW (Member): Error calculating historical score for ${memberInput.name} on ${format(historicalDate, 'yyyy-MM-dd')}: ${historicalDayResult.error}`);
+        console.warn(`TEAM OVERVIEW (Member): Error calculating historical score for ${memberInput.name} on ${format(historicalDateCandidate, 'yyyy-MM-dd')}: ${historicalDayResult.error}`);
       } else {
-        console.log(`TEAM OVERVIEW (Member): Historical score for ${memberInput.name} on ${format(historicalDate, 'yyyy-MM-dd')}: Score=${historicalDayResult.fragmentationScore}, Activities=${historicalDayResult.activitiesCount}. Summary: ${historicalDayResult.summary}`);
+        console.log(`TEAM OVERVIEW (Member): Historical score for ${memberInput.name} on ${format(historicalDateCandidate, 'yyyy-MM-dd')}: Score=${historicalDayResult.fragmentationScore}, Activities=${historicalDayResult.activitiesCount}. Summary: ${historicalDayResult.summary}`);
         historicalScoresData.push({
-          date: format(startOfDay(historicalDate), 'yyyy-MM-dd'),
+          date: format(startOfDay(historicalDateCandidate), 'yyyy-MM-dd'), // Store just the date part
           score: historicalDayResult.fragmentationScore,
           riskLevel: historicalDayResult.riskLevel,
           summary: historicalDayResult.summary,
@@ -184,21 +224,17 @@ export default function TeamOverviewPage() {
         });
       }
     }
-    historicalScoresData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    historicalScoresData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // Sort by date ascending
 
     let avgHistScore: number | null = null;
-    const activeHistoricalScores = historicalScoresData.filter(hs => hs.activitiesCount > 0); 
-    if (activeHistoricalScores.length > 0) {
-      const sum = activeHistoricalScores.reduce((acc, curr) => acc + curr.score, 0);
-      avgHistScore = parseFloat((sum / activeHistoricalScores.length).toFixed(1));
-    } else if (historicalScoresData.length > 0) { 
-        const nonZeroActivityScores = historicalScoresData.filter(hs => hs.activitiesCount > 0);
-        if (nonZeroActivityScores.length > 0) {
-            const sum = nonZeroActivityScores.reduce((acc, curr) => acc + curr.score, 0);
-            avgHistScore = parseFloat((sum / nonZeroActivityScores.length).toFixed(1));
-        } else { 
-            avgHistScore = 0.5; // If all historical days had 0 activity, avg is 0.5
-        }
+    // Calculate average only from historical scores that didn't result in a baseline "no activity" score, unless all are baseline
+    const validHistoricalScoresForAverage = historicalScoresData.filter(hs => hs.score > 0.5 || (hs.score === 0.5 && hs.activitiesCount > 0) );
+    
+    if (validHistoricalScoresForAverage.length > 0) {
+      const sum = validHistoricalScoresForAverage.reduce((acc, curr) => acc + curr.score, 0);
+      avgHistScore = parseFloat((sum / validHistoricalScoresForAverage.length).toFixed(1));
+    } else if (historicalScoresData.length > 0) { // If all historical scores were 0.5 due to no activity
+      avgHistScore = 0.5;
     }
 
 
@@ -212,16 +248,16 @@ export default function TeamOverviewPage() {
       isLoadingScore: false,
       isLoadingActivities: false,
       scoreError: overallMemberError,
-      activityError: overallMemberError, 
+      activityError: overallMemberError, // Consolidate errors
     };
-  }, [fetchActivitiesAndCalculateDailyScore]); 
+  }, [fetchActivitiesAndCalculateDailyScore]);
 
 
   const handleRetryMemberProcessing = useCallback(async (memberId: string) => {
     console.log(`TEAM OVERVIEW: Retrying data processing for member ID: ${memberId}`);
     const memberToRetry = teamData.find(m => m.id === memberId);
 
-    if (memberToRetry && dateRange?.from && dateRange?.to && allJiraIssues !== undefined) { // Check allJiraIssues is not undefined (can be null if error)
+    if (memberToRetry && dateRange?.from && dateRange?.to && allJiraIssues !== undefined) {
       setTeamData(prevTeamData =>
         prevTeamData.map(m =>
           m.id === memberId
@@ -252,20 +288,21 @@ export default function TeamOverviewPage() {
         )
       );
     } else {
-      console.error(`TEAM OVERVIEW: Could not find member with ID ${memberId} to retry, or date range/allJiraIssues not set.`);
+      console.error(`TEAM OVERVIEW: Could not find member with ID ${memberId} to retry, or date range/allJiraIssues not set. AllJiraIssues defined: ${allJiraIssues !== undefined}`);
     }
   }, [teamData, processSingleMember, dateRange, allJiraIssues]);
 
   useEffect(() => {
     if (isHR && dateRange?.from && dateRange?.to) {
-      const fetchAllDataAndProcess = async () => {
+      const fetchGraphUsersAndProcessAll = async () => {
+        console.log("TEAM OVERVIEW: Starting fetchGraphUsersAndProcessAll due to HR, dateRange, or refreshKey change.");
         setIsLoadingAllJiraIssues(true);
         setAllJiraIssuesError(null);
-        setAllJiraIssues(null);
-        setIsLoadingUsers(true); // This will be set to false after MS Graph users are fetched or fail
+        setAllJiraIssues(null); 
+        setIsLoadingUsers(true); 
         setUserFetchError(null);
         setTeamData([]); 
-        setIsProcessingMembers(true); // Indicates the entire multi-stage process has begun
+        setIsProcessingMembers(true);
         
         const currentSystemTimeForFetch = new Date(); 
         const effectiveRangeFrom = startOfDay(dateRange.from);
@@ -278,8 +315,7 @@ export default function TeamOverviewPage() {
         }
         console.log(`TEAM OVERVIEW: Effective processing range for ALL members: ${format(effectiveRangeFrom, 'yyyy-MM-dd')} to ${format(effectiveRangeToForFetch, 'yyyy-MM-dd HH:mm:ss')}`);
 
-        // Step 1: Fetch all Jira issues
-        let fetchedAllJiraIssues: JiraIssue[] | null = null;
+        let fetchedAllJiraIssuesGlobally: JiraIssue[] | null = null;
         try {
           console.log(`TEAM OVERVIEW: Fetching all assigned Jira issues for range: ${dateRange.from.toISOString()} to ${dateRange.to.toISOString()}`);
           const jiraParams = new URLSearchParams({
@@ -291,35 +327,34 @@ export default function TeamOverviewPage() {
             const errorData = await response.json();
             throw new Error(errorData.error || `Failed to fetch all Jira issues: ${response.statusText}`);
           }
-          fetchedAllJiraIssues = await response.json();
-          setAllJiraIssues(fetchedAllJiraIssues);
-          console.log(`TEAM OVERVIEW: Successfully fetched ${fetchedAllJiraIssues?.length || 0} total assigned Jira issues.`);
+          fetchedAllJiraIssuesGlobally = await response.json();
+          setAllJiraIssues(fetchedAllJiraIssuesGlobally); // Set state for dialog
+          console.log(`TEAM OVERVIEW: Successfully fetched ${fetchedAllJiraIssuesGlobally?.length || 0} total assigned Jira issues globally.`);
         } catch (err: any) {
           console.error("TEAM OVERVIEW: Error fetching all Jira issues:", err);
           setAllJiraIssuesError(err.message || "An unknown error occurred while fetching all Jira issues.");
-          // Continue without allJiraIssues, score calculation will be affected for Jira part
         } finally {
           setIsLoadingAllJiraIssues(false);
         }
 
-        // Step 2: Fetch MS Graph users
         let msUsers: MicrosoftGraphUser[] = [];
         try {
+          console.log("TEAM OVERVIEW: Fetching MS Graph users...");
           const response = await fetch("/api/microsoft-graph/users", { cache: 'no-store' });
           if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.error || `Failed to fetch MS Graph users: ${response.statusText}`);
           }
           msUsers = await response.json();
+          console.log(`TEAM OVERVIEW: Fetched ${msUsers.length} MS Graph users.`);
         } catch (err: any) {
           console.error("TEAM OVERVIEW: Error fetching MS Graph users:", err);
           setUserFetchError(err.message || "An unknown error occurred while fetching users.");
           setIsLoadingUsers(false);
-          setIsProcessingMembers(false); // Stop overall processing if MS Graph users fail
+          setIsProcessingMembers(false);
           return;
         }
         setIsLoadingUsers(false);
-
 
         const validMsUsers = msUsers.filter(msUser => {
           if (!msUser.id) {
@@ -348,34 +383,30 @@ export default function TeamOverviewPage() {
         }));
         setTeamData(initialTeamDataSetup);
 
-        // Step 3: Process each member
+        console.log(`TEAM OVERVIEW: Starting to process ${initialTeamDataSetup.length} members.`);
         const processedTeamDataPromises = initialTeamDataSetup.map(member => {
             const { currentDayScoreData: _a, historicalScores: _b, averageHistoricalScore: _c, isLoadingScore: _d, isLoadingActivities: _e, scoreError: _f, activityError: _g, ...baseInfo } = member;
-            return processSingleMember(baseInfo, effectiveRangeFrom, effectiveRangeToForFetch, currentSystemTimeForFetch, fetchedAllJiraIssues);
+            return processSingleMember(baseInfo, effectiveRangeFrom, effectiveRangeToForFetch, currentSystemTimeForFetch, fetchedAllJiraIssuesGlobally);
         });
         
-        // Process in parallel and update UI as results come in or all at once
-        // For incremental updates:
+        // Process in parallel and update UI as results come in
         for (const promise of processedTeamDataPromises) {
             try {
                 const updatedMember = await promise;
                 setTeamData(prev => prev.map(m => m.id === updatedMember.id ? updatedMember : m));
             } catch (error: any) {
-                console.error(`TEAM OVERVIEW: Critical error processing member during parallel execution:`, error);
-                // Find which member this error belongs to if possible and update their card, or handle generically
+                console.error(`TEAM OVERVIEW: Critical error processing member during parallel execution. Member ID might not be available here. Error:`, error);
+                // Find a way to associate this error with a member if possible, or handle generically
             }
         }
-        // Or to update all at once after all resolved (might feel less responsive but simpler state management):
-        // const finalProcessedTeamData = await Promise.all(processedTeamDataPromises);
-        // setTeamData(finalProcessedTeamData);
         
         setIsProcessingMembers(false);
         console.log("TEAM OVERVIEW: All members processing attempted.");
       };
-      fetchAllDataAndProcess();
+      fetchGraphUsersAndProcessAll();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHR, dateRange, refreshKey, processSingleMember]); // Removed fetchActivitiesAndCalculateDailyScore as it's now part of processSingleMember's scope
+  }, [isHR, dateRange, refreshKey, processSingleMember]); 
 
   const teamStats = teamData.reduce((acc, member) => {
     if (member.isLoadingScore || !member.currentDayScoreData?.riskLevel || member.scoreError) return acc;
@@ -398,6 +429,7 @@ export default function TeamOverviewPage() {
 
   const handleEndDateSelect = (day: Date | undefined) => {
     if (!day) return;
+    // If selected day is today, set 'to' to current time, otherwise end of selected day
     const newTo = isEqual(startOfDay(day), startOfDay(new Date())) ? new Date() : endOfDay(day);
     setDateRange(prev => {
         const currentFrom = prev?.from || startOfDay(subDays(newTo, 6)); 
@@ -429,14 +461,15 @@ export default function TeamOverviewPage() {
     let fetchErrorForDialog: string | null = null;
 
     // Filter pre-fetched Jira activities for dialog
-    if (memberToView.email && allJiraIssues) {
+    if (memberToView.email && allJiraIssues) { // Use the globally fetched allJiraIssues
+        const memberEmailLower = memberToView.email.toLowerCase();
         const userJiraIssuesForDialog = allJiraIssues.filter(issue => {
-            const assigneeMatch = issue.fields.assignee?.emailAddress === memberToView.email;
+            const assigneeMatch = issue.fields.assignee?.emailAddress?.toLowerCase() === memberEmailLower;
             let dateMatch = false;
             try {
                 const issueUpdatedDate = parseISO(issue.fields.updated);
                 dateMatch = isWithinInterval(issueUpdatedDate, { start: activityDayStart, end: activityDayEnd });
-            } catch (e) { /* ignore */ }
+            } catch (e) { console.warn(`Could not parse issue.fields.updated for dialog: ${issue.fields.updated} for issue ${issue.key}`); }
             return assigneeMatch && dateMatch;
         });
         activitiesForDialog.push(...userJiraIssuesForDialog.map((issue): GenericActivityItem => ({
@@ -445,8 +478,10 @@ export default function TeamOverviewPage() {
             details: `[${issue.key}] ${issue.fields.summary} (Status: ${issue.fields.status.name})`,
             source: 'jira',
         })));
+        console.log(`TEAM_OVERVIEW (Dialog): Found ${userJiraIssuesForDialog.length} Jira issues for ${memberToView.name} from global list for dialog.`);
     } else if (memberToView.email && !allJiraIssues && !isLoadingAllJiraIssues) {
          fetchErrorForDialog = (fetchErrorForDialog ? fetchErrorForDialog + "; " : "") + `Jira: Global issues list not available. ${allJiraIssuesError || ''}`;
+         console.warn(`TEAM_OVERVIEW (Dialog): Jira global list not available for ${memberToView.name}. Error: ${allJiraIssuesError}`);
     }
 
 
@@ -577,7 +612,7 @@ export default function TeamOverviewPage() {
         <Alert variant="default" className="shadow-md border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-500" />
           <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Fetching All Jira Issues</AlertTitle>
-          <AlertDescription className="text-blue-600 dark:text-blue-500">Loading initial Jira data for the selected range...</AlertDescription>
+          <AlertDescription className="text-blue-600 dark:text-blue-500">Loading initial Jira data for the selected range. This may take a moment...</AlertDescription>
         </Alert>
       )}
       {isHR && allJiraIssuesError && !isLoadingAllJiraIssues && (
@@ -589,7 +624,7 @@ export default function TeamOverviewPage() {
       )}
 
 
-      {isHR && isLoadingUsers && !isLoadingAllJiraIssues && (
+      {isHR && isLoadingUsers && !isLoadingAllJiraIssues && ( // Only show if Jira issues are done or errored but users are still loading
         <Alert variant="default" className="shadow-md border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-500" />
           <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Fetching Team Members</AlertTitle>
@@ -728,5 +763,3 @@ export default function TeamOverviewPage() {
     </div>
   );
 }
-
-    
