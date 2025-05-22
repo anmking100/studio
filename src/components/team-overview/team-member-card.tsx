@@ -1,11 +1,11 @@
 
 "use client";
 
-import type { TeamMemberFocus, HistoricalScore, CalculateFragmentationScoreOutput } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import type { TeamMemberFocus, CalculateFragmentationScoreOutput } from "@/lib/types";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { UserCircle, AlertTriangle, ShieldCheck, Activity, Loader2, Info, Briefcase, MessageSquare, RefreshCw, CalendarDays, TrendingUp, Zap, LineChart } from "lucide-react";
+import { UserCircle, AlertTriangle, ShieldCheck, Activity, Loader2, Info, Briefcase, MessageSquare, RefreshCw, CalendarDays, TrendingUp, Zap, LineChart, Eye } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -16,10 +16,11 @@ interface TeamMemberCardProps {
   member: TeamMemberFocus;
   showDetailedScore: boolean;
   onRetry?: () => Promise<void>;
+  onViewDetails?: (member: TeamMemberFocus) => void;
   currentScoreDate?: Date;
 }
 
-export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScoreDate }: TeamMemberCardProps) {
+export function TeamMemberCard({ member, showDetailedScore, onRetry, onViewDetails, currentScoreDate }: TeamMemberCardProps) {
   const {
     name,
     avatarUrl,
@@ -41,7 +42,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
   if (mainRiskLevel === 'Low') { statusText = 'Stable'; StatusIcon = ShieldCheck; }
   else if (mainRiskLevel === 'Moderate') { statusText = 'At Risk'; StatusIcon = Activity; }
   else if (mainRiskLevel === 'High') { statusText = 'Overloaded'; StatusIcon = AlertTriangle; }
-  else { statusText = 'Stable'; StatusIcon = ShieldCheck; } // Default for unknown/loading
+  else { statusText = 'Stable'; StatusIcon = ShieldCheck; } 
 
   const getStatusBadgeClasses = (status: string): string => {
     if (status === "Stable") return "border-green-500 text-green-600 dark:border-green-400 dark:text-green-500 bg-green-500/10";
@@ -71,25 +72,31 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
   };
 
   let errorTitle = "Data Processing Error";
-  let errorDescription = scoreError || "An error occurred while fetching activities or calculating scores.";
+  let errorDescription = scoreError;
   let displayErrorIcon = AlertTriangle;
 
   if (scoreError) {
     if (isRateLimitError(scoreError)) {
       errorTitle = "API Rate Limit Reached";
-      errorDescription = "Too many requests. Please try again later or select a smaller date range.";
+      errorDescription = "Too many requests to an external service. Please try again later or select a smaller date range.";
       displayErrorIcon = Zap;
     } else if (isAiOverloadedError(scoreError)) {
-      errorTitle = "AI Model Busy"; // Though less likely now for scores, kept for robustness
+      errorTitle = "AI Model Busy";
       errorDescription = "An AI model is temporarily overloaded. Please try again.";
       displayErrorIcon = Zap;
-    } else {
-        errorDescription = scoreError; // Show the actual error message for other errors
     }
   }
 
+  const handleCardClick = () => {
+    if (onViewDetails && showDetailedScore && !isLoadingScore) {
+      onViewDetails(member);
+    }
+  };
+  
+  const cardClassName = `shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[320px] sm:min-h-[350px] ${onViewDetails && showDetailedScore && !isLoadingScore ? 'cursor-pointer' : ''}`;
+
   return (
-    <Card className="shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[320px] sm:min-h-[350px]">
+    <Card className={cardClassName} onClick={handleCardClick}>
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
         <div className="flex-1 min-w-0">
           <CardTitle className="text-md font-medium truncate" title={name}>{name}</CardTitle>
@@ -112,13 +119,13 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
             <displayErrorIcon className="h-8 w-8 mb-2" />
             <p className="text-sm font-semibold">{errorTitle}</p>
             <p className="text-xs mt-1">
-              {errorDescription.length > 120 ? errorDescription.substring(0, 120) + "..." : errorDescription}
+              {errorDescription}
             </p>
             <div className="mt-2 flex gap-2">
               <TooltipProvider>
                 <Tooltip delayDuration={100}>
                   <TooltipTrigger asChild>
-                    <Button variant="outline" size="sm" className="text-xs h-auto px-2 py-1 border-destructive text-destructive hover:bg-destructive/10">Details</Button>
+                     <Button variant="outline" size="sm" className="text-xs h-auto px-2 py-1 border-destructive text-destructive hover:bg-destructive/10" onClick={(e) => e.stopPropagation()}>Details</Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-md bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
                     {scoreError}
@@ -126,7 +133,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
                 </Tooltip>
               </TooltipProvider>
               {onRetry && (
-                <Button variant="outline" size="sm" onClick={onRetry} className="text-xs h-auto px-2 py-1 border-primary text-primary hover:bg-primary/10">
+                <Button variant="outline" size="sm" onClick={(e) => {e.stopPropagation(); onRetry();}} className="text-xs h-auto px-2 py-1 border-primary text-primary hover:bg-primary/10">
                   <RefreshCw className="mr-1 h-3 w-3" />
                   Retry
                 </Button>
@@ -142,9 +149,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
                   {statusText} (Daily Score)
                 </Badge>
                 <div className="text-right">
-                  <p className="text-xs text-muted-foreground">
-                    Score ({currentScoreDate ? format(currentScoreDate, 'MMM d') : 'Daily'})
-                  </p>
+                    <p className="text-xs text-muted-foreground">Score ({currentScoreDate ? format(currentScoreDate, 'MMM d') : 'Daily'})</p>
                   <p className="text-2xl font-bold text-primary">{mainScore.toFixed(1)}</p>
                 </div>
               </div>
@@ -156,7 +161,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
-                    <div className="mt-1 text-xs text-muted-foreground flex items-center cursor-help hover:text-primary transition-colors">
+                    <div className="mt-1 text-xs text-muted-foreground flex items-center cursor-help hover:text-primary transition-colors" onClick={(e) => e.stopPropagation()}>
                       <Info className="h-3.5 w-3.5 mr-1 shrink-0" />
                       <span className="truncate">Daily Score Summary (hover)</span>
                     </div>
@@ -183,6 +188,11 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
             {historicalScores && historicalScores.length === 0 && !isLoadingScore && (
               <p className="text-xs text-muted-foreground mt-2 text-center">No historical daily scores to display for selected range.</p>
             )}
+            {onViewDetails && (
+                <Button variant="outline" size="sm" className="w-full mt-2 text-xs" onClick={(e) => { e.stopPropagation(); handleCardClick(); }}>
+                    <Eye className="mr-2 h-3.5 w-3.5" /> View Activities
+                </Button>
+            )}
           </>
         ) : (
           <div className="flex flex-col items-center justify-center flex-grow">
@@ -199,5 +209,3 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
     </Card>
   );
 }
-
-    
