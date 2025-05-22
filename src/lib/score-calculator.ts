@@ -10,7 +10,7 @@ const RISK_THRESHOLDS = {
 // Define weights for different factors
 const FACTOR_WEIGHTS = {
   MEETING: 0.4, // Score per meeting
-  JIRA_TASK_UPDATE: 0.15, // Score per Jira task update
+  JIRA_TASK_UPDATE: 0.4, // Score per Jira task update - UPDATED from 0.15
   SOURCE_SWITCH: 0.25, // Score per switch between different sources (e.g., Jira to Teams)
   TYPE_SWITCH_SAME_SOURCE: 0.1, // Score per switch between different activity types within the same source
   MULTI_PLATFORM_USAGE_BONUS: 0.5, // Bonus if > 2 sources are used
@@ -107,10 +107,12 @@ export function calculateScoreAlgorithmically(
   }
 
   // Nudge score up if there's activity but score is still very low
-  if (activities.length > 0 && score > 0 && score < 0.6) { 
-    score = 0.6; 
-  } else if (activities.length > 0 && score === 0.0) { // If logic somehow results in 0 with activities
-    score = 0.1; // Give a minimal score to differentiate from truly no activity
+  // Changed from 0.5 for "no activity" to 0.0.
+  // If score is 0 but activities exist, bump to a minimal 0.1
+  if (activities.length > 0 && score > 0 && score < 0.1) { 
+    score = 0.1; 
+  } else if (activities.length > 0 && score === 0.0) { 
+    score = 0.1; 
   }
 
 
@@ -148,7 +150,7 @@ export function calculateScoreAlgorithmically(
       summaryParts.push(`periods of high activity density`);
     }
 
-    if (summaryParts.length === 0 && finalScore <= 1.0 && finalScore > 0.0) { 
+    if (summaryParts.length === 0 && finalScore <= 1.0 && finalScore >= 0.0) { // Adjusted to include 0.0 if activities > 0
         summaryParts.push("low overall activity levels.");
     } else if (summaryParts.length === 0 && finalScore > 1.0) {
         summaryParts.push("general activity patterns.");
@@ -156,9 +158,9 @@ export function calculateScoreAlgorithmically(
   }
   
   let summary = `Score of ${finalScore} (${riskLevel}). `;
-  if (summaryParts.length > 0 && !(finalScore === 0.0 && activities.length === 0)) { // Avoid "Key factors" if no activity
+  if (summaryParts.length > 0 && !(finalScore === 0.0 && activities.length === 0)) { 
      summary += "Key factors: " + summaryParts.join(', ') + ".";
-  } else if (activities.length > 0 && finalScore > 0.0) { 
+  } else if (activities.length > 0 && finalScore >= 0.0) { // Adjusted to include 0.0
     summary += "Calculated based on general activity level."
   } else if (finalScore === 0.0 && activities.length === 0) {
     // The initial summary part already covers this.
@@ -173,3 +175,4 @@ export function calculateScoreAlgorithmically(
     activitiesCount: activities.length,
   };
 }
+
