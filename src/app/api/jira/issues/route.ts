@@ -77,7 +77,6 @@ export async function GET(request: NextRequest) {
     }
   } else {
     // Default to last 7 days if no specific date range
-    // This logic branch might not be hit if team-overview page always provides dates
     const sevenDaysAgo = format(subDays(new Date(), 7), "yyyy-MM-dd HH:mm");
     const now = format(new Date(), "yyyy-MM-dd HH:mm");
     jql += ` AND updated >= "${sevenDaysAgo}" AND updated <= "${now}"`;
@@ -86,7 +85,7 @@ export async function GET(request: NextRequest) {
   jql += ` ORDER BY updated DESC`;
 
   const apiUrl = `${JIRA_INSTANCE_URL}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=summary,status,updated,issuetype,priority,labels`;
-  console.log(`JIRA API: Constructed API URL (JQL part encoded): ${apiUrl}`);
+  console.log(`JIRA API: Constructed API URL (JQL part encoded): ${apiUrl.split('?')[0]}?jql=...`); // Avoid logging full JQL if too long or sensitive
   console.log(`JIRA API: Full JQL query: ${jql}`);
 
 
@@ -98,15 +97,14 @@ export async function GET(request: NextRequest) {
         'Authorization': `Basic ${Buffer.from(`${JIRA_USERNAME}:${JIRA_API_TOKEN}`).toString('base64')}`,
         'Accept': 'application/json',
       },
-      cache: 'no-store', // Disable caching for debugging
+      cache: 'no-store', 
     });
 
-    console.log(`JIRA API: Response status for ${userEmail}: ${response.status}`);
+    console.log(`JIRA API: Response status for ${userEmail} (period starting ${startDateParam}): ${response.status}`);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`JIRA API Error: Jira API request failed for ${userEmail}. Status: ${response.status}, StatusText: ${response.statusText}. Body: ${errorText.substring(0, 500)}`); // Log more of the error body
-      // Do not throw here if you want to return a JSON response, handle it below
+      console.error(`JIRA API Error: Jira API request failed for ${userEmail}. Status: ${response.status}, StatusText: ${response.statusText}. Body: ${errorText.substring(0, 500)}`);
       return NextResponse.json(
         {
           error: `Jira API request failed with status ${response.status}. Check server logs for details. Ensure Jira URL, credentials, and user email validity.`,
@@ -118,13 +116,21 @@ export async function GET(request: NextRequest) {
 
     const data = await response.json();
     const issues: JiraIssue[] = data.issues || [];
-    console.log(`JIRA API: Found ${issues.length} Jira issues for ${userEmail} for the specified period.`);
+    
     if (issues.length > 0) {
-        console.log(`JIRA API: Sample issue for ${userEmail}: Key - ${issues[0].key}, Summary - ${issues[0].fields.summary}`);
+        console.log(`JIRA API: SUCCESS - Found ${issues.length} Jira raw issues for ${userEmail} for period starting ${startDateParam}.`);
+        console.log(`JIRA API: Sample raw issue for ${userEmail}: Key - ${issues[0].key}, Summary - "${issues[0].fields.summary}", Updated - ${issues[0].fields.updated}`);
+    } else {
+        console.log(`JIRA API: INFO - No Jira issues found for ${userEmail} for period starting ${startDateParam} using JQL: ${jql}`);
     }
 
-
     const activities: GenericActivityItem[] = issues.map(mapJiraIssueToActivity);
+    if (activities.length > 0) {
+        console.log(`JIRA API: Mapped ${activities.length} issues to GenericActivityItem format for ${userEmail}. Sample mapped activity type: ${activities[0].type}, details: "${activities[0].details}"`);
+    } else if (issues.length > 0) { // Issues were found but mapping resulted in zero - less likely with current map
+        console.warn(`JIRA API: Found ${issues.length} issues but mapped 0 activities for ${userEmail}. Check mapping logic or issue structure.`);
+    }
+    
     return NextResponse.json(activities);
 
   } catch (error: any) {
