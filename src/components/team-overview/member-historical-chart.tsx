@@ -41,25 +41,23 @@ export function MemberHistoricalChart({ historicalData }: MemberHistoricalChartP
     if (minScore === maxScore) { 
         minScore = Math.max(0, minScore - 0.5);
         maxScore = Math.min(5, maxScore + 0.5);
-        if (minScore === maxScore) { // If score is 0 or 5 and still min=max
-          minScore = Math.max(0, minScore - 0.5); // e.g. score is 0, domain [0, 0.5]
-          maxScore = minScore + 1; // e.g. score is 0, domain [0,1]
+        if (minScore === maxScore) { 
+          minScore = Math.max(0, minScore - 0.5); 
+          maxScore = minScore + 1; 
         }
     } else {
         minScore = Math.max(0, minScore - 0.2); 
         maxScore = Math.min(5, maxScore + 0.2);
     }
     
-    // Ensure a minimum visible range, e.g., at least 1 unit on Y-axis if possible
     if (maxScore - minScore < 1) {
         const mid = (maxScore + minScore) / 2;
         minScore = Math.max(0, mid - 0.5);
         maxScore = Math.min(5, mid + 0.5);
-         if (maxScore - minScore < 0.1) { // if still too small (e.g. centered on 0 or 5)
-            maxScore = minScore + 0.5; // ensure some visible range
+         if (maxScore - minScore < 0.1) { 
+            maxScore = minScore + 0.5; 
         }
     }
-     // Final check to ensure min isn't greater than max
     if (minScore > maxScore - 0.1) minScore = Math.max(0, maxScore - 0.5);
 
 
@@ -79,7 +77,7 @@ export function MemberHistoricalChart({ historicalData }: MemberHistoricalChartP
           margin={{
             top: 5,
             right: 10,
-            left: -20, 
+            left: -10, // Adjusted left margin for potentially more space
             bottom: 0,
           }}
         >
@@ -90,7 +88,7 @@ export function MemberHistoricalChart({ historicalData }: MemberHistoricalChartP
             axisLine={false}
             tickMargin={5}
             tickFormatter={(value) => value} 
-            interval={chartData.length <= 5 ? 0 : "auto"}
+            interval={chartData.length <= 5 ? 0 : "auto"} // Shows all ticks for 5 or less, auto for more
             style={{ fontSize: '10px' }}
           />
           <YAxis
@@ -135,4 +133,3 @@ export function MemberHistoricalChart({ historicalData }: MemberHistoricalChartP
     </ChartContainer>
   );
 }
-

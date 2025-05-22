@@ -37,8 +37,8 @@ export function calculateScoreAlgorithmically(
   if (!activities || activities.length === 0) {
     return {
       userId,
-      fragmentationScore: 0.5,
-      summary: `No activities tracked for this period, reflecting low work-related fragmentation.`,
+      fragmentationScore: 0.0, // Changed from 0.5 to 0.0
+      summary: `No activities tracked for this period.`,
       riskLevel: 'Low',
       activitiesCount: 0,
     };
@@ -109,10 +109,9 @@ export function calculateScoreAlgorithmically(
   // Cap and round the score
   score = Math.min(5.0, Math.max(0.0, score));
   // If score is very low (e.g. from only a single, minor activity), but not zero-activity, ensure it's at least above the "no activity" score.
-  if (activities.length > 0 && score < 0.6 && score > 0) { 
-    score = Math.max(score, 0.6); // Ensure a minimal score if any activity exists
-  } else if (activities.length > 0 && score === 0) { // If logic somehow results in 0 with activities
-    score = 0.6;
+  // With 0 activity now scoring 0.0, any activity should result in a score > 0.
+  if (activities.length > 0 && score === 0) { // If logic somehow results in 0 with activities
+    score = 0.1; // Ensure a minimal score if any activity exists and calculation resulted in 0
   }
 
 
@@ -130,20 +129,20 @@ export function calculateScoreAlgorithmically(
 
   // Generate Summary
   let summaryParts: string[] = [];
-  if (finalScore === 0.5 && activities.length === 0) {
-     summaryParts.push(`No activities tracked for this period, reflecting low work-related fragmentation.`);
+  if (finalScore === 0.0 && activities.length === 0) { // Adjusted condition
+     summaryParts.push(`No activities tracked for this period.`);
   } else {
     if (contributingFactors.jiraTaskUpdates > 0) {
-      summaryParts.push(`${contributingFactors.jiraTaskUpdates} Jira task activities`);
+      summaryParts.push(`${contributingFactors.jiraTaskUpdates} Jira task activit${contributingFactors.jiraTaskUpdates === 1 ? 'y' : 'ies'}`);
     }
     if (contributingFactors.meetings > 0) {
       summaryParts.push(`${contributingFactors.meetings} meeting(s)`);
     }
     if (contributingFactors.sourceSwitches > 0) {
-      summaryParts.push(`${contributingFactors.sourceSwitches} platform switches`);
+      summaryParts.push(`${contributingFactors.sourceSwitches} platform switch${contributingFactors.sourceSwitches === 1 ? '' : 'es'}`);
     }
     if (contributingFactors.typeSwitches > 0) {
-      summaryParts.push(`${contributingFactors.typeSwitches} task type switches`);
+      summaryParts.push(`${contributingFactors.typeSwitches} task type switch${contributingFactors.typeSwitches === 1 ? '' : 'es'}`);
     }
     if (contributingFactors.multiplePlatformsUsed) {
       summaryParts.push(`activity across ${uniqueSources.size} platforms`);
@@ -152,7 +151,7 @@ export function calculateScoreAlgorithmically(
       summaryParts.push(`periods of high activity density`);
     }
 
-    if (summaryParts.length === 0 && finalScore <= 1.0) {
+    if (summaryParts.length === 0 && finalScore <= 1.0 && finalScore > 0.0) { // Ensure it's not 0.0 for this summary
         summaryParts.push("low overall activity levels.");
     } else if (summaryParts.length === 0 && finalScore > 1.0) {
         summaryParts.push("general activity patterns.");
@@ -162,7 +161,7 @@ export function calculateScoreAlgorithmically(
   let summary = `Score of ${finalScore} (${riskLevel}). `;
   if (summaryParts.length > 0) {
      summary += "Key factors: " + summaryParts.join(', ') + ".";
-  } else if (activities.length > 0) {
+  } else if (activities.length > 0) { // If activities are present but no specific factors were prominent
     summary += "Calculated based on general activity level."
   }
 
