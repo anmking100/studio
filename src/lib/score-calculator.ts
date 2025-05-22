@@ -25,6 +25,7 @@ interface ContributingFactors {
   typeSwitches: number;
   multiplePlatformsUsed: boolean;
   highActivityDensityPeriods: number;
+  activitiesProcessed: number; // To track if any activities were processed
   [key: string]: number | boolean; // Allow other string keys
 }
 
@@ -37,8 +38,9 @@ export function calculateScoreAlgorithmically(
     return {
       userId,
       fragmentationScore: 0.5,
-      summary: `No activities tracked for the ${activityWindowDays}-day period, reflecting low work-related fragmentation.`,
+      summary: `No activities tracked for this period, reflecting low work-related fragmentation.`,
       riskLevel: 'Low',
+      activitiesCount: 0,
     };
   }
 
@@ -50,6 +52,7 @@ export function calculateScoreAlgorithmically(
     typeSwitches: 0,
     multiplePlatformsUsed: false,
     highActivityDensityPeriods: 0,
+    activitiesProcessed: activities.length,
   };
 
   // Sort activities by timestamp to correctly identify switches
@@ -83,7 +86,10 @@ export function calculateScoreAlgorithmically(
         contributingFactors.typeSwitches++;
       }
     }
-    previousActivity = activity;
+    // Avoid counting presence updates as the "previous activity" for switch calculations if it's the only thing
+    if (activity.type !== 'teams_presence_update') {
+        previousActivity = activity;
+    }
   }
 
   // Multi-platform usage
@@ -93,20 +99,23 @@ export function calculateScoreAlgorithmically(
     contributingFactors.multiplePlatformsUsed = true;
   }
   
-  // Activity Density (simple check: count periods with many activities)
-  // This is a basic example; a more sophisticated approach would analyze time blocks.
-  if (activities.length / activityWindowDays > FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD * 24 / 8) { // Pro-rata for an 8-hour workday
-     // Example: if more than 5 activities per "effective" work day average
-     // This logic is very simplistic and could be refined. For now, consider it based on daily average.
-    if(activities.length > FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD * activityWindowDays){
-        score += FACTOR_WEIGHTS.ACTIVITY_DENSITY_BONUS;
-        contributingFactors.highActivityDensityPeriods = 1; // Simplified
-    }
+  // Activity Density
+  if (activities.length > FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD * activityWindowDays) {
+    score += FACTOR_WEIGHTS.ACTIVITY_DENSITY_BONUS;
+    contributingFactors.highActivityDensityPeriods = 1; // Simplified
   }
 
 
   // Cap and round the score
   score = Math.min(5.0, Math.max(0.0, score));
+  // If score is very low (e.g. from only a single, minor activity), but not zero-activity, ensure it's at least above the "no activity" score.
+  if (activities.length > 0 && score < 0.6 && score > 0) { 
+    score = Math.max(score, 0.6); // Ensure a minimal score if any activity exists
+  } else if (activities.length > 0 && score === 0) { // If logic somehow results in 0 with activities
+    score = 0.6;
+  }
+
+
   const finalScore = parseFloat(score.toFixed(1));
 
   // Determine Risk Level
@@ -121,14 +130,14 @@ export function calculateScoreAlgorithmically(
 
   // Generate Summary
   let summaryParts: string[] = [];
-  if (finalScore === 0.5 && activities.length === 0) { // Handled at the start
-     summaryParts.push(`No activities tracked for the ${activityWindowDays}-day period, reflecting low work-related fragmentation.`);
+  if (finalScore === 0.5 && activities.length === 0) {
+     summaryParts.push(`No activities tracked for this period, reflecting low work-related fragmentation.`);
   } else {
-    if (contributingFactors.meetings > 0) {
-      summaryParts.push(`${contributingFactors.meetings} meeting(s)`);
-    }
     if (contributingFactors.jiraTaskUpdates > 0) {
       summaryParts.push(`${contributingFactors.jiraTaskUpdates} Jira task activities`);
+    }
+    if (contributingFactors.meetings > 0) {
+      summaryParts.push(`${contributingFactors.meetings} meeting(s)`);
     }
     if (contributingFactors.sourceSwitches > 0) {
       summaryParts.push(`${contributingFactors.sourceSwitches} platform switches`);
@@ -139,22 +148,22 @@ export function calculateScoreAlgorithmically(
     if (contributingFactors.multiplePlatformsUsed) {
       summaryParts.push(`activity across ${uniqueSources.size} platforms`);
     }
-     if (contributingFactors.highActivityDensityPeriods > 0) {
-      summaryParts.push(`high activity density`);
+    if (contributingFactors.highActivityDensityPeriods > 0) {
+      summaryParts.push(`periods of high activity density`);
     }
 
     if (summaryParts.length === 0 && finalScore <= 1.0) {
-        summaryParts.push("Low overall activity.");
+        summaryParts.push("low overall activity levels.");
     } else if (summaryParts.length === 0 && finalScore > 1.0) {
-        summaryParts.push("Score based on general activity patterns.");
+        summaryParts.push("general activity patterns.");
     }
   }
   
   let summary = `Score of ${finalScore} (${riskLevel}). `;
   if (summaryParts.length > 0) {
-     summary += "Key factors: " + summaryParts.slice(0, 3).join(', ') + ".";
+     summary += "Key factors: " + summaryParts.join(', ') + ".";
   } else if (activities.length > 0) {
-    summary += "Calculated based on general activity level and patterns."
+    summary += "Calculated based on general activity level."
   }
 
 
@@ -163,5 +172,6 @@ export function calculateScoreAlgorithmically(
     fragmentationScore: finalScore,
     summary,
     riskLevel,
+    activitiesCount: activities.length,
   };
 }
