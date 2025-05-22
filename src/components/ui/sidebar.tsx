@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -162,6 +163,10 @@ const Sidebar = React.forwardRef<
     side?: "left" | "right"
     variant?: "sidebar" | "floating" | "inset"
     collapsible?: "offcanvas" | "icon" | "none"
+    // Explicitly include Sheet/Dialog props that might be passed through
+    defaultOpen?: boolean;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
   }
 >(
   (
@@ -171,11 +176,29 @@ const Sidebar = React.forwardRef<
       collapsible = "offcanvas",
       className,
       children,
-      ...props
+      // Destructure Sheet/Dialog-specific props to separate them from div props
+      defaultOpen: _defaultOpen, // Consumed by Sheet, not for div
+      open: _open,               // Consumed by Sheet, not for div
+      onOpenChange: _onOpenChange, // Consumed by Sheet, not for div
+      ...divElementProps // Remaining props are for the div elements
     },
     ref
   ) => {
     const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+
+    // Collect all original props (including those for Sheet) to pass to Sheet
+    const allPassedProps = { 
+      side, 
+      variant, 
+      collapsible, 
+      className, 
+      children, 
+      defaultOpen: _defaultOpen, 
+      open: _open, 
+      onOpenChange: _onOpenChange, 
+      ...divElementProps 
+    };
+
 
     if (collapsible === "none") {
       return (
@@ -185,7 +208,7 @@ const Sidebar = React.forwardRef<
             className
           )}
           ref={ref}
-          {...props}
+          {...divElementProps} // Spread only div-specific props
         >
           {children}
         </div>
@@ -194,7 +217,8 @@ const Sidebar = React.forwardRef<
 
     if (isMobile) {
       return (
-        <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
+        // Pass all original props to Sheet as it can handle defaultOpen, open, onOpenChange
+        <Sheet open={openMobile} onOpenChange={setOpenMobile} {...allPassedProps}>
           <SheetContent
             data-sidebar="sidebar"
             data-mobile="true"
@@ -220,6 +244,7 @@ const Sidebar = React.forwardRef<
         data-collapsible={state === "collapsed" ? collapsible : ""}
         data-variant={variant}
         data-side={side}
+        // Do not spread props on this outer div unless they are specifically meant for it
       >
         {/* This is what handles the sidebar gap on desktop */}
         <div
@@ -244,7 +269,7 @@ const Sidebar = React.forwardRef<
               : "group-data-[collapsible=icon]:w-[--sidebar-width-icon] group-data-[side=left]:border-r group-data-[side=right]:border-l",
             className
           )}
-          {...props}
+          {...divElementProps} // Spread only div-specific props here
         >
           <div
             data-sidebar="sidebar"
