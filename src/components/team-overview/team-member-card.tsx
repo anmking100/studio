@@ -1,14 +1,15 @@
 
 "use client";
 
-import type { TeamMemberFocus } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import type { TeamMemberFocus, HistoricalScore } from "@/lib/types";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { UserCircle, AlertTriangle, ShieldCheck, Activity, Loader2, Info, Briefcase, MessageSquare, RefreshCw } from "lucide-react";
+import { UserCircle, AlertTriangle, ShieldCheck, Activity, Loader2, Info, Briefcase, MessageSquare, RefreshCw, CalendarDays, TrendingUp } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { format, parseISO } from 'date-fns';
 
 interface TeamMemberCardProps {
   member: TeamMemberFocus;
@@ -20,29 +21,26 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
   const { 
     name, 
     avatarUrl, 
-    aiCalculatedScore, 
-    aiRiskLevel, 
-    aiSummary, 
+    currentDayScoreData,
+    historicalScores,
+    averageHistoricalScore,
     isLoadingScore, 
-    isLoadingActivities,
-    scoreError,
-    activityError 
+    scoreError 
   } = member;
 
-  const currentScore = showDetailedScore && aiCalculatedScore !== undefined ? aiCalculatedScore : 0;
-  const currentRiskLevel = showDetailedScore && aiRiskLevel ? aiRiskLevel : 'Stable';
-  const currentSummary = showDetailedScore ? aiSummary : undefined;
+  const currentScore = showDetailedScore && currentDayScoreData ? currentDayScoreData.fragmentationScore : 0;
+  const currentRiskLevel = showDetailedScore && currentDayScoreData ? currentDayScoreData.riskLevel : 'Stable';
+  const currentSummary = showDetailedScore && currentDayScoreData ? currentDayScoreData.summary : undefined;
 
   let StatusIcon = ShieldCheck;
-  let statusText = currentRiskLevel;
+  let statusText = currentRiskLevel as string; // To match one of the expected strings
 
   if (currentRiskLevel === 'Low') { statusText = 'Stable'; StatusIcon = ShieldCheck; }
   else if (currentRiskLevel === 'Moderate') { statusText = 'At Risk'; StatusIcon = Activity; }
   else if (currentRiskLevel === 'High') { statusText = 'Overloaded'; StatusIcon = AlertTriangle; }
-  else { statusText = 'Stable'; StatusIcon = ShieldCheck;}
+  else { statusText = 'Stable'; StatusIcon = ShieldCheck;} // Default
 
-
-  const getStatusBadgeClasses = (status: typeof statusText): string => {
+  const getStatusBadgeClasses = (status: string): string => {
     if (status === "Stable") return "border-green-500 text-green-600 dark:border-green-400 dark:text-green-500 bg-green-500/10";
     if (status === "At Risk") return "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-500 bg-yellow-500/10"; 
     if (status === "Overloaded") return "border-destructive text-destructive bg-destructive/10"; 
@@ -57,49 +55,40 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
     progressIndicatorClassName = "bg-yellow-500";
   }
 
-  const overallLoading = isLoadingScore || isLoadingActivities;
-
   const isAiOverloadedError = (errorMsg?: string | null): boolean => {
     if (!errorMsg) return false;
     return errorMsg.includes("model is overloaded") || errorMsg.includes("503 Service Unavailable");
   };
 
-  let displayedError = "";
-  if (scoreError) displayedError = scoreError;
-  if (activityError && !displayedError) displayedError = activityError; // Prefer scoreError if both exist
-  else if (activityError && displayedError) displayedError = `Score Error: ${scoreError}\nActivity Error: ${activityError}`;
-
-
   return (
-    <Card className="shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[250px]">
+    <Card className="shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[300px]">
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
         <div className="flex-1 min-w-0">
           <CardTitle className="text-md font-medium truncate" title={name}>{name}</CardTitle>
           <p className="text-xs text-muted-foreground truncate" title={member.email}>{member.email}</p>
         </div>
         <Avatar className="h-10 w-10 ml-2 shrink-0">
-          <AvatarImage src={avatarUrl || `https://placehold.co/100x100.png?text=${name?.[0]}`} alt={name} data-ai-hint="user avatar" />
+          <AvatarImage src={avatarUrl || `https://placehold.co/100x100.png?text=${name?.[0]}`} alt={name} data-ai-hint="user avatar"/>
           <AvatarFallback>{name?.[0]?.toUpperCase() || <UserCircle/>}</AvatarFallback>
         </Avatar>
       </CardHeader>
       <CardContent className="space-y-2 flex-grow flex flex-col justify-between">
-        {overallLoading && showDetailedScore ? (
+        {isLoadingScore && showDetailedScore ? (
           <div className="flex flex-col items-center justify-center flex-grow text-muted-foreground">
             <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-            <p className="text-sm text-center">
-                {isLoadingActivities && !isLoadingScore ? "Fetching activities..." : isLoadingScore ? "Calculating score..." : "Processing..."}
-            </p>
+            <p className="text-sm text-center">Processing scores...</p>
+            <p className="text-xs text-center">(Current & Historical)</p>
           </div>
-        ) : (displayedError) && showDetailedScore ? (
+        ) : scoreError && showDetailedScore ? (
           <div className="flex flex-col items-center justify-center flex-grow text-destructive p-2 text-center">
             <AlertTriangle className="h-8 w-8 mb-2" />
             <p className="text-sm font-semibold">
-              {isAiOverloadedError(displayedError) ? "AI Model Busy" : "Error Processing"}
+              {isAiOverloadedError(scoreError) ? "AI Model Busy" : "Error Processing"}
             </p>
             <p className="text-xs mt-1">
-              {isAiOverloadedError(displayedError) 
-                ? "The AI model is temporarily overloaded. Please try again later." 
-                : (activityError && scoreError ? `Multiple errors occurred.` : `${displayedError.substring(0, 100)}${displayedError.length > 100 ? "..." : ""}`)
+              {isAiOverloadedError(scoreError) 
+                ? "The AI model is temporarily overloaded. Please try again." 
+                : "An error occurred while calculating scores."
               }
             </p>
             <div className="mt-2 flex gap-2">
@@ -109,7 +98,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
                             <Button variant="outline" size="sm" className="text-xs h-auto px-2 py-1 border-destructive text-destructive hover:bg-destructive/10">Details</Button>
                         </TooltipTrigger>
                         <TooltipContent side="bottom" className="max-w-md bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
-                            {displayedError}
+                            {scoreError}
                         </TooltipContent>
                     </Tooltip>
                 </TooltipProvider>
@@ -121,16 +110,16 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
                 )}
             </div>
           </div>
-        ) : showDetailedScore ? (
+        ) : showDetailedScore && currentDayScoreData ? (
           <>
             <div>
               <div className="flex items-center justify-between mb-1">
                 <Badge variant="outline" className={getStatusBadgeClasses(statusText)}>
                   <StatusIcon className="mr-1 h-3.5 w-3.5" />
-                  {statusText}
+                  {statusText} (Current)
                 </Badge>
                 <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Frag. Score</p>
+                    <p className="text-xs text-muted-foreground">Current Score</p>
                     <p className="text-2xl font-bold text-primary">{currentScore.toFixed(1)}</p>
                 </div>
               </div>
@@ -143,7 +132,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
                   <TooltipTrigger asChild>
                     <div className="mt-2 text-xs text-muted-foreground flex items-center cursor-help hover:text-primary transition-colors">
                       <Info className="h-3.5 w-3.5 mr-1 shrink-0" />
-                      <span className="truncate">AI Insights (hover for details)</span>
+                      <span className="truncate">Current AI Insights (hover)</span>
                     </div>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" align="start" className="max-w-xs bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
@@ -152,25 +141,50 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
                 </Tooltip>
               </TooltipProvider>
             )}
-            <div className="mt-auto pt-2 text-xs text-muted-foreground">
-              <div className="flex items-center gap-1.5">
-                <Briefcase className="h-3.5 w-3.5 shrink-0" /> 
-                <span>Jira Activities: {member.activities?.filter(a => a.source === 'jira').length || 0}</span>
+
+            {historicalScores && historicalScores.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-border">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1">
+                    <TrendingUp className="h-4 w-4" />
+                    <span>5-Day Avg:</span>
+                  </div>
+                  <span className="font-semibold text-foreground">{averageHistoricalScore?.toFixed(1) ?? "N/A"}</span>
+                </div>
+                 <TooltipProvider>
+                    <Tooltip delayDuration={200}>
+                      <TooltipTrigger asChild>
+                        <div className="mt-1 text-xs text-muted-foreground flex items-center cursor-help hover:text-primary transition-colors">
+                          <CalendarDays className="h-3.5 w-3.5 mr-1 shrink-0" />
+                          <span className="truncate">Daily Scores (hover)</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" align="start" className="max-w-xs bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs">
+                        <p className="font-semibold mb-1">Past {historicalScores.length} Days:</p>
+                        <ul className="space-y-0.5">
+                          {historicalScores.slice().reverse().map(hs => ( // Show most recent first
+                            <li key={hs.date} className="flex justify-between">
+                              <span>{format(parseISO(hs.date), 'MMM d')}:</span>
+                              <span className="font-medium">{hs.score.toFixed(1)} ({hs.riskLevel})</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
               </div>
-              <div className="flex items-center gap-1.5">
-                <MessageSquare className="h-3.5 w-3.5 shrink-0" />
-                <span>Teams/M365 Activities: {member.activities?.filter(a => a.source === 'm365').length || 0}</span>
-              </div>
-            </div>
+            )}
+
+
           </>
-        ) : ( // Non-HR view
+        ) : ( // Non-HR view or data not yet loaded for HR
            <div className="flex flex-col items-center justify-center flex-grow">
              <Badge variant="outline" className={getStatusBadgeClasses(statusText)}>
                 <StatusIcon className="mr-1 h-3.5 w-3.5" />
                 {statusText}
              </Badge>
              <p className="text-sm text-muted-foreground mt-2 text-center">
-                Detailed focus scores are available to HR personnel.
+                {!showDetailedScore ? "Detailed focus scores are available to HR personnel." : "Loading score data..."}
              </p>
            </div>
         )}
@@ -178,4 +192,3 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
     </Card>
   );
 }
-

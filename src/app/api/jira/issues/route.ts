@@ -1,10 +1,11 @@
 
 import {NextRequest, NextResponse} from 'next/server';
 import type { GenericActivityItem } from '@/lib/types';
+import { format, subDays, startOfDay, endOfDay } from 'date-fns';
 
 const JIRA_INSTANCE_URL = process.env.JIRA_INSTANCE_URL;
-const JIRA_USERNAME = process.env.JIRA_USERNAME; // Basic auth username (often email)
-const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN; // Jira API Token
+const JIRA_USERNAME = process.env.JIRA_USERNAME; 
+const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN; 
 
 interface JiraIssue {
   key: string;
@@ -13,7 +14,7 @@ interface JiraIssue {
     status: {
       name: string;
     };
-    updated: string; // ISO 8601 datetime string
+    updated: string; 
     issuetype: {
       name: string;
     };
@@ -26,7 +27,7 @@ interface JiraIssue {
 
 function mapJiraIssueToActivity(issue: JiraIssue): GenericActivityItem {
   return {
-    type: `jira_issue_${issue.fields.issuetype.name.toLowerCase().replace(/\s+/g, '_')}`, // e.g., jira_issue_bug, jira_issue_story
+    type: `jira_issue_${issue.fields.issuetype.name.toLowerCase().replace(/\s+/g, '_')}`,
     timestamp: issue.fields.updated,
     details: `[${issue.key}] ${issue.fields.summary} (Status: ${issue.fields.status.name})`,
     source: 'jira',
@@ -36,12 +37,14 @@ function mapJiraIssueToActivity(issue: JiraIssue): GenericActivityItem {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const userEmail = searchParams.get('userEmail');
+  const startDateParam = searchParams.get('startDate'); // YYYY-MM-DD
+  const endDateParam = searchParams.get('endDate');   // YYYY-MM-DD
 
   if (!JIRA_INSTANCE_URL || !JIRA_USERNAME || !JIRA_API_TOKEN) {
     console.error("Jira API integration not configured on server. Missing JIRA_INSTANCE_URL, JIRA_USERNAME, or JIRA_API_TOKEN.");
     return NextResponse.json(
       { error: "Jira API integration not configured on server. Admin needs to set environment variables." },
-      { status: 503 } // Service Unavailable
+      { status: 503 } 
     );
   }
 
@@ -49,11 +52,26 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Jira User Email (userEmail) is required." }, { status: 400 });
   }
   
-  const jql = `assignee = "${userEmail}" AND updated >= -7d ORDER BY updated DESC`;
+  let jql = `assignee = "${userEmail}"`;
+
+  if (startDateParam && endDateParam) {
+    // Filter for a specific day
+    const S_DATE = format(new Date(startDateParam), "yyyy-MM-dd");
+    const E_DATE = format(new Date(endDateParam), "yyyy-MM-dd");
+    jql += ` AND updated >= "${S_DATE} 00:00" AND updated <= "${E_DATE} 23:59"`;
+    console.log(`Jira: Fetching for ${userEmail} between ${S_DATE} and ${E_DATE}`);
+  } else {
+    // Default to last 7 days if no specific date range
+    const sevenDaysAgo = format(subDays(new Date(), 7), "yyyy-MM-dd");
+    jql += ` AND updated >= "${sevenDaysAgo}"`;
+     console.log(`Jira: Fetching for ${userEmail} for last 7 days (default)`);
+  }
+  jql += ` ORDER BY updated DESC`;
+  
   const apiUrl = `${JIRA_INSTANCE_URL}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=summary,status,updated,issuetype,priority,labels`;
 
   try {
-    console.log(`Fetching Jira issues for ${userEmail} from ${apiUrl}`);
+    console.log(`Fetching Jira issues for ${userEmail} from ${apiUrl.split('?')[0]} with JQL: ${jql}`);
     const response = await fetch(apiUrl, {
       method: 'GET',
       headers: {
@@ -70,7 +88,7 @@ export async function GET(request: NextRequest) {
 
     const data = await response.json();
     const issues: JiraIssue[] = data.issues || [];
-    console.log(`Found ${issues.length} Jira issues for ${userEmail}.`);
+    console.log(`Found ${issues.length} Jira issues for ${userEmail} for the specified period.`);
 
     const activities: GenericActivityItem[] = issues.map(mapJiraIssueToActivity);
     return NextResponse.json(activities);
