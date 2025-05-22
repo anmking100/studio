@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, Users, ListChecks, ExternalLink } from "lucide-react";
+import { Loader2, AlertTriangle, Users, ListChecks } from "lucide-react";
 import Image from "next/image";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { JiraUser } from "@/lib/types";
@@ -64,10 +64,10 @@ export default function JiraIntegrationPage() {
               </div>
             </div>
              <Image
-              src="https://placehold.co/300x150.png" 
-              alt="Jira integration illustration" 
-              width={150} 
-              height={75} 
+              src="https://placehold.co/300x150.png"
+              alt="Jira integration illustration"
+              width={150}
+              height={75}
               className="rounded-lg mt-4 md:mt-0 opacity-80"
               data-ai-hint="jira logo team"
             />
@@ -92,7 +92,7 @@ export default function JiraIntegrationPage() {
             </Button>
           </div>
           <CardDescription>
-            Active users retrieved from your Jira instance (up to 50 users shown).
+            Active users with email addresses retrieved from your Jira instance (up to 50 users shown).
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -114,9 +114,10 @@ export default function JiraIntegrationPage() {
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>No Jira Users Found</AlertTitle>
               <AlertDescription>
-                No active users were returned from the Jira API, or the initial fetch hasn't completed successfully.
+                No active users with email addresses were returned from the Jira API.
                 Ensure your Jira .env file is correctly configured with `JIRA_INSTANCE_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN`.
                 The Jira integration user also needs 'Browse users and groups' global permission.
+                Also, check if the users you expect have an email address associated with them in Jira.
               </AlertDescription>
             </Alert>
           )}
@@ -149,15 +150,6 @@ export default function JiraIntegrationPage() {
           )}
         </CardContent>
       </Card>
-
-      <Alert variant="default" className="border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400 shadow-sm">
-          <ExternalLink className="h-5 w-5 text-blue-600 dark:text-blue-500" />
-          <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Configuration Note</AlertTitle>
-          <AlertDescription className="text-blue-600 dark:text-blue-500">
-            This page displays users from your Jira instance. Ensure `JIRA_INSTANCE_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN` are correctly set in your `.env` file. The Jira account used for authentication (specified by `JIRA_USERNAME`) needs 'Browse users and groups' global permission in Jira. The application needs to be restarted after changing `.env` variables.
-            Fragmentation scores for users are calculated based on their activity (issues assigned/updated), not just by listing them here.
-          </AlertDescription>
-      </Alert>
     </div>
   );
 }
