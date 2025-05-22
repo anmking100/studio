@@ -20,11 +20,12 @@ export default function TeamOverviewPage() {
   const [teamData, setTeamData] = useState<TeamMemberFocus[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(isHR); 
   const [userFetchError, setUserFetchError] = useState<string | null>(null);
-  const [isProcessingMembers, setIsProcessingMembers] = useState(false); // Combined state for activity fetching and score calculation
+  const [isProcessingMembers, setIsProcessingMembers] = useState(false); 
 
   const fetchActivitiesAndCalculateScore = useCallback(async (member: TeamMemberFocus): Promise<TeamMemberFocus> => {
     let combinedActivities: GenericActivityItem[] = [];
     let activityError: string | null = null;
+    let scoreError: string | null = null;
 
     try {
       console.log(`Fetching activities for ${member.name} (ID: ${member.id}, Email: ${member.email})`);
@@ -39,9 +40,9 @@ export default function TeamOverviewPage() {
             console.log(`Fetched ${jiraActivities.length} Jira activities for ${member.name}`);
           } else {
             const errorData = await jiraResponse.json();
-            const jiraError = `Jira API error (${jiraResponse.status}): ${errorData.error || 'Failed to fetch Jira issues.'}`;
-            console.warn(jiraError, `User: ${member.name}`);
-            activityError = (activityError ? activityError + "\n" : "") + jiraError;
+            const jiraErrorMessage = `Jira API error (${jiraResponse.status}): ${errorData.error || 'Failed to fetch Jira issues.'}`;
+            console.warn(jiraErrorMessage, `User: ${member.name}`);
+            activityError = (activityError ? activityError + "\n" : "") + jiraErrorMessage;
           }
         } catch (e: any) {
            const jiraCatchError = `Error fetching Jira activities for ${member.name}: ${e.message}`;
@@ -49,7 +50,9 @@ export default function TeamOverviewPage() {
            activityError = (activityError ? activityError + "\n" : "") + jiraCatchError;
         }
       } else {
-        console.log(`Skipping Jira for ${member.name} due to missing email.`);
+        const noEmailMsg = `Skipping Jira for ${member.name} (ID: ${member.id}) due to missing email.`;
+        console.log(noEmailMsg);
+        activityError = (activityError ? activityError + "\n" : "") + noEmailMsg;
       }
 
       // Fetch Teams Activities
@@ -61,9 +64,9 @@ export default function TeamOverviewPage() {
           console.log(`Fetched ${teamsActivities.length} Teams activities for ${member.name}`);
         } else {
           const errorData = await teamsResponse.json();
-          const teamsError = `Teams API error (${teamsResponse.status}): ${errorData.error || 'Failed to fetch Teams activities.'}`;
-          console.warn(teamsError, `User: ${member.name}`);
-          activityError = (activityError ? activityError + "\n" : "") + teamsError;
+          const teamsErrorMessage = `Teams API error (${teamsResponse.status}): ${errorData.error || 'Failed to fetch Teams activities.'}`;
+          console.warn(teamsErrorMessage, `User: ${member.name}`);
+          activityError = (activityError ? activityError + "\n" : "") + teamsErrorMessage;
         }
       } catch (e: any) {
         const teamsCatchError = `Error fetching Teams activities for ${member.name}: ${e.message}`;
@@ -75,10 +78,7 @@ export default function TeamOverviewPage() {
       
       if (combinedActivities.length === 0 && !activityError) {
          console.log(`No activities found for ${member.name} from any source.`);
-         // Optional: Create a specific 'no_activity' activity item to inform the AI
-         // combinedActivities.push({ type: 'no_activity_found', timestamp: new Date().toISOString(), source: 'other', details: 'No activities retrieved from Jira or Teams.' });
       }
-
 
       // Calculate Fragmentation Score
       const input: CalculateFragmentationScoreInput = {
@@ -97,25 +97,55 @@ export default function TeamOverviewPage() {
         isLoadingScore: false,
         scoreError: null,
         activities: combinedActivities,
-        activityError: activityError,
+        activityError: activityError, // Store any activity errors
         isLoadingActivities: false,
       };
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : `Failed to calculate score for ${member.name}.`;
-      console.error(`Error processing member ${member.name} (ID: ${member.id}):`, errorMessage, err);
+      scoreError = err instanceof Error ? err.message : `Failed to calculate score for ${member.name}.`;
+      console.error(`Error processing member ${member.name} (ID: ${member.id}):`, scoreError, err);
       return {
         ...member,
         isLoadingScore: false,
-        scoreError: errorMessage,
-        aiSummary: `Error calculating score: ${errorMessage.substring(0, 100)}`,
-        aiRiskLevel: "High" as "Low" | "Moderate" | "High", // Default on error
+        scoreError: scoreError,
+        aiSummary: `Error calculating score: ${scoreError.substring(0, 100)}`,
+        aiRiskLevel: "High" as "Low" | "Moderate" | "High", 
         aiCalculatedScore: 0, 
-        activities: combinedActivities, // Still include fetched activities if any
-        activityError: (activityError ? activityError + "\n" : "") + `Score calc error: ${errorMessage.substring(0,100)}`,
+        activities: combinedActivities, 
+        activityError: activityError,
         isLoadingActivities: false,
       };
     }
   }, []);
+
+  const handleRetryScoreCalculation = useCallback(async (memberId: string) => {
+    console.log(`Retrying score calculation for member ID: ${memberId}`);
+    setTeamData(prevTeamData => 
+      prevTeamData.map(m => 
+        m.id === memberId 
+          ? { ...m, isLoadingScore: true, isLoadingActivities: true, scoreError: null, activityError: null } 
+          : m
+      )
+    );
+
+    const memberToRetry = teamData.find(m => m.id === memberId);
+    if (memberToRetry) {
+      const updatedMember = await fetchActivitiesAndCalculateScore(memberToRetry);
+      setTeamData(prevTeamData => 
+        prevTeamData.map(m => 
+          m.id === memberId ? updatedMember : m
+        )
+      );
+    } else {
+      console.error(`Could not find member with ID ${memberId} to retry.`);
+       setTeamData(prevTeamData => 
+        prevTeamData.map(m => 
+          m.id === memberId 
+            ? { ...m, isLoadingScore: false, isLoadingActivities: false, scoreError: "Failed to find member to retry." } 
+            : m
+        )
+      );
+    }
+  }, [teamData, fetchActivitiesAndCalculateScore]);
 
 
   useEffect(() => {
@@ -124,71 +154,74 @@ export default function TeamOverviewPage() {
         setIsLoadingUsers(true);
         setUserFetchError(null);
         setTeamData([]);
-        setIsProcessingMembers(true); // Start processing state
+        setIsProcessingMembers(true); 
 
+        let msUsers: MicrosoftGraphUser[] = [];
         try {
           const response = await fetch("/api/microsoft-graph/users");
           if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.error || `Failed to fetch MS Graph users: ${response.statusText}`);
           }
-          const msUsers: MicrosoftGraphUser[] = await response.json();
-          
-          const validMsUsers = msUsers.filter(msUser => {
-            if (!msUser.id) {
-              console.warn(`Microsoft Graph user data missing ID. User Principal Name: ${msUser.userPrincipalName || 'N/A'}. This user will be skipped.`);
-              return false;
-            }
-            if (!msUser.userPrincipalName) {
-                console.warn(`Microsoft Graph user data missing User Principal Name (email). User ID: ${msUser.id}. Jira activities might be unavailable.`);
-                // We can still proceed if ID is present, but Jira might fail.
-            }
-            return true;
-          });
-
-          if (validMsUsers.length === 0) {
-            const errorMsg = msUsers.length > 0 ? "Fetched users from MS Graph, but none had a valid 'id' field. Check MS Graph API response structure or permissions." : "No users found in Microsoft Graph. Ensure users exist and the API is returning them correctly with an 'id' field.";
-            setUserFetchError(errorMsg);
-            setIsLoadingUsers(false);
-            setIsProcessingMembers(false);
-            return;
-          }
-
-          const initialTeamData: TeamMemberFocus[] = validMsUsers.map(msUser => ({
-            id: msUser.id, 
-            name: msUser.displayName || msUser.userPrincipalName || "Unknown User",
-            email: msUser.userPrincipalName || "", // Ensure email is string
-            role: (msUser.userPrincipalName?.toLowerCase().includes('hr')) ? 'hr' : 'developer', 
-            lastWeekTrend: 0, // Default, can be calculated later
-            avatarUrl: `https://placehold.co/100x100.png?text=${(msUser.displayName || msUser.userPrincipalName || "U")?.[0]?.toUpperCase()}`,
-            isLoadingScore: true, 
-            isLoadingActivities: true,
-            scoreError: null,
-            activityError: null,
-          }));
-          setTeamData(initialTeamData); // Set initial data with loading states
-          setIsLoadingUsers(false); // Finished fetching users
-
-          // Now process each member for activities and scores
-          const processedTeamData = await Promise.all(
-            initialTeamData.map(member => fetchActivitiesAndCalculateScore(member))
-          );
-          setTeamData(processedTeamData);
-
+          msUsers = await response.json();
         } catch (err: any) {
-          console.error("Error fetching MS Graph users or processing members:", err);
-          setUserFetchError(err.message || "An unknown error occurred while fetching or processing users.");
+          console.error("Error fetching MS Graph users:", err);
+          setUserFetchError(err.message || "An unknown error occurred while fetching users.");
           setIsLoadingUsers(false);
-        } finally {
-            setIsProcessingMembers(false); // All processing done or errored
+          setIsProcessingMembers(false);
+          return;
         }
+          
+        const validMsUsers = msUsers.filter(msUser => {
+          if (!msUser.id) {
+            console.warn(`Microsoft Graph user data missing ID. User Principal Name: ${msUser.userPrincipalName || 'N/A'}. This user will be skipped.`);
+            return false;
+          }
+          // Email (userPrincipalName) is used for Jira, but its absence shouldn't block the user from appearing if ID is present
+          if (!msUser.userPrincipalName) {
+              console.warn(`Microsoft Graph user data missing User Principal Name (email) for User ID: ${msUser.id}. Jira activities might be unavailable for this user.`);
+          }
+          return true;
+        });
+
+        if (validMsUsers.length === 0) {
+          const errorMsg = msUsers.length > 0 
+            ? "Fetched users from MS Graph, but none had a valid 'id' field. Check MS Graph API response structure or permissions." 
+            : "No users found in Microsoft Graph. Check your configuration and ensure there are users in your tenant, or that the users have an 'id' field.";
+          setUserFetchError(errorMsg);
+          setIsLoadingUsers(false);
+          setIsProcessingMembers(false);
+          return;
+        }
+
+        const initialTeamData: TeamMemberFocus[] = validMsUsers.map(msUser => ({
+          id: msUser.id!, 
+          name: msUser.displayName || msUser.userPrincipalName || "Unknown User",
+          email: msUser.userPrincipalName || "", 
+          role: (msUser.userPrincipalName?.toLowerCase().includes('hr')) ? 'hr' : 'developer', 
+          lastWeekTrend: 0, 
+          avatarUrl: `https://placehold.co/100x100.png?text=${(msUser.displayName || msUser.userPrincipalName || "U")?.[0]?.toUpperCase()}`,
+          isLoadingScore: true, 
+          isLoadingActivities: true,
+          scoreError: null,
+          activityError: null,
+        }));
+        setTeamData(initialTeamData); 
+        setIsLoadingUsers(false); 
+
+        // Now process each member for activities and scores
+        const processedTeamData = await Promise.all(
+          initialTeamData.map(member => fetchActivitiesAndCalculateScore(member))
+        );
+        setTeamData(processedTeamData);
+        setIsProcessingMembers(false); 
       };
       fetchGraphUsersAndProcess();
     }
-  }, [isHR, fetchActivitiesAndCalculateScore]);
+  }, [isHR, fetchActivitiesAndCalculateScore]); // Removed teamData from dependencies to avoid re-triggering on its update
   
   const teamStats = teamData.reduce((acc, member) => {
-    if (member.isLoadingScore || !member.aiRiskLevel) return acc;
+    if (member.isLoadingScore || !member.aiRiskLevel || member.scoreError) return acc; // Exclude members with errors from stats
     const riskLevel = member.aiRiskLevel;
     const status = riskLevel === 'Low' ? 'Stable' : riskLevel === 'Moderate' ? 'At Risk' : 'Overloaded'; 
     if (status === "Stable") acc.stable++;
@@ -314,7 +347,7 @@ export default function TeamOverviewPage() {
             For Microsoft Teams/M365 activity: Ensure your Azure App Registration has the following Microsoft Graph API permissions granted (Application type) with admin consent: `User.Read.All`, `Presence.Read.All`, and `Calendars.Read`.
           </p>
           <p>
-            If activity data or scores are missing for a user, check the server console logs for specific errors related to API calls for that user.
+            If activity data or scores are missing for a user, check the server console logs for specific errors related to API calls for that user. Click "Details" on the user card for error specifics.
           </p>
         </AlertDescription>
       </Alert>
@@ -340,7 +373,12 @@ export default function TeamOverviewPage() {
             </Alert>
           )}
           {teamData.map((member) => (
-            <TeamMemberCard key={member.id} member={member} showDetailedScore={isHR} />
+            <TeamMemberCard 
+              key={member.id} 
+              member={member} 
+              showDetailedScore={isHR} 
+              onRetry={() => handleRetryScoreCalculation(member.id)}
+            />
           ))}
            {!isHR && teamData.length === 0 && ( 
             <Alert className="col-span-full">
@@ -356,3 +394,4 @@ export default function TeamOverviewPage() {
     </div>
   );
 }
+

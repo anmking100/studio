@@ -4,7 +4,7 @@
 import type { TeamMemberFocus } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge"; // Removed type BadgeProps as it's not directly used
+import { Badge } from "@/components/ui/badge";
 import { UserCircle, AlertTriangle, ShieldCheck, Activity, Loader2, Info, Briefcase, MessageSquare, RefreshCw } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -13,9 +13,10 @@ import { Button } from "@/components/ui/button";
 interface TeamMemberCardProps {
   member: TeamMemberFocus;
   showDetailedScore: boolean; 
+  onRetry?: () => Promise<void>;
 }
 
-export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProps) {
+export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMemberCardProps) {
   const { 
     name, 
     avatarUrl, 
@@ -66,6 +67,8 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
   let displayedError = "";
   if (scoreError) displayedError = scoreError;
   if (activityError && !displayedError) displayedError = activityError; // Prefer scoreError if both exist
+  else if (activityError && displayedError) displayedError = `Score Error: ${scoreError}\nActivity Error: ${activityError}`;
+
 
   return (
     <Card className="shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[250px]">
@@ -84,7 +87,7 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
           <div className="flex flex-col items-center justify-center flex-grow text-muted-foreground">
             <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
             <p className="text-sm text-center">
-                {isLoadingActivities ? "Fetching activities..." : "Calculating score..."}
+                {isLoadingActivities && !isLoadingScore ? "Fetching activities..." : isLoadingScore ? "Calculating score..." : "Processing..."}
             </p>
           </div>
         ) : (displayedError) && showDetailedScore ? (
@@ -96,21 +99,27 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
             <p className="text-xs mt-1">
               {isAiOverloadedError(displayedError) 
                 ? "The AI model is temporarily overloaded. Please try again later." 
-                : (activityError && scoreError ? `Activity/Score Error (see details)` : `${displayedError.substring(0, 100)}${displayedError.length > 100 ? "..." : ""}`)
+                : (activityError && scoreError ? `Multiple errors occurred.` : `${displayedError.substring(0, 100)}${displayedError.length > 100 ? "..." : ""}`)
               }
             </p>
-            <TooltipProvider>
-                <Tooltip delayDuration={100}>
-                    <TooltipTrigger asChild>
-                        <Button variant="link" size="sm" className="text-xs h-auto p-0 mt-1 text-destructive">Details</Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="max-w-md bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
-                        {activityError && `Activity Fetch Error:\n${activityError}\n\n`}
-                        {scoreError && `Score Calculation Error:\n${scoreError}`}
-                        {!activityError && !scoreError && displayedError}
-                    </TooltipContent>
-                </Tooltip>
-            </TooltipProvider>
+            <div className="mt-2 flex gap-2">
+                <TooltipProvider>
+                    <Tooltip delayDuration={100}>
+                        <TooltipTrigger asChild>
+                            <Button variant="outline" size="sm" className="text-xs h-auto px-2 py-1 border-destructive text-destructive hover:bg-destructive/10">Details</Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-md bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
+                            {displayedError}
+                        </TooltipContent>
+                    </Tooltip>
+                </TooltipProvider>
+                {onRetry && (
+                    <Button variant="outline" size="sm" onClick={onRetry} className="text-xs h-auto px-2 py-1 border-primary text-primary hover:bg-primary/10">
+                        <RefreshCw className="mr-1 h-3 w-3"/>
+                        Retry
+                    </Button>
+                )}
+            </div>
           </div>
         ) : showDetailedScore ? (
           <>
@@ -169,3 +178,4 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
     </Card>
   );
 }
+

@@ -38,6 +38,7 @@ export interface TeamMemberFocus {
   activities?: GenericActivityItem[]; // Store fetched activities
   activityError?: string | null; // Store errors from fetching activities
   isLoadingActivities?: boolean;
+  // onRetry?: (memberId: string) => Promise<void>; // Placeholder if needed in type, but usually passed as prop
 }
 
 export interface Task {
@@ -79,3 +80,4 @@ export interface CalculateFragmentationScoreOutputType {
   summary: string; // Explanation of the score
   riskLevel: 'Low' | 'Moderate' | 'High';
 }
+
