@@ -5,7 +5,7 @@ import type { TeamMemberFocus, HistoricalScore } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { UserCircle, AlertTriangle, ShieldCheck, Activity, Loader2, Info, Briefcase, MessageSquare, RefreshCw, CalendarDays, TrendingUp } from "lucide-react";
+import { UserCircle, AlertTriangle, ShieldCheck, Activity, Loader2, Info, Briefcase, MessageSquare, RefreshCw, CalendarDays, TrendingUp, Zap } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -33,12 +33,12 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
   const currentSummary = showDetailedScore && currentDayScoreData ? currentDayScoreData.summary : undefined;
 
   let StatusIcon = ShieldCheck;
-  let statusText = currentRiskLevel as string; // To match one of the expected strings
+  let statusText = currentRiskLevel as string; 
 
   if (currentRiskLevel === 'Low') { statusText = 'Stable'; StatusIcon = ShieldCheck; }
   else if (currentRiskLevel === 'Moderate') { statusText = 'At Risk'; StatusIcon = Activity; }
   else if (currentRiskLevel === 'High') { statusText = 'Overloaded'; StatusIcon = AlertTriangle; }
-  else { statusText = 'Stable'; StatusIcon = ShieldCheck;} // Default
+  else { statusText = 'Stable'; StatusIcon = ShieldCheck;} 
 
   const getStatusBadgeClasses = (status: string): string => {
     if (status === "Stable") return "border-green-500 text-green-600 dark:border-green-400 dark:text-green-500 bg-green-500/10";
@@ -59,6 +59,25 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
     if (!errorMsg) return false;
     return errorMsg.includes("model is overloaded") || errorMsg.includes("503 Service Unavailable");
   };
+
+  const isRateLimitError = (errorMsg?: string | null): boolean => {
+    if (!errorMsg) return false;
+    return errorMsg.includes("429 Too Many Requests") || errorMsg.includes("exceeded your current quota");
+  };
+
+  let errorTitle = "Error Processing";
+  let errorDescription = "An error occurred while calculating scores.";
+  if (scoreError) {
+    if (isRateLimitError(scoreError)) {
+      errorTitle = "AI Rate Limit Reached";
+      errorDescription = "Too many requests to the AI model. Please try again later or reduce the number of historical days processed.";
+      StatusIcon = Zap; // Using Zap icon for rate limit
+    } else if (isAiOverloadedError(scoreError)) {
+      errorTitle = "AI Model Busy";
+      errorDescription = "The AI model is temporarily overloaded. Please try again.";
+    }
+  }
+
 
   return (
     <Card className="shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[300px]">
@@ -81,16 +100,9 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
           </div>
         ) : scoreError && showDetailedScore ? (
           <div className="flex flex-col items-center justify-center flex-grow text-destructive p-2 text-center">
-            <AlertTriangle className="h-8 w-8 mb-2" />
-            <p className="text-sm font-semibold">
-              {isAiOverloadedError(scoreError) ? "AI Model Busy" : "Error Processing"}
-            </p>
-            <p className="text-xs mt-1">
-              {isAiOverloadedError(scoreError) 
-                ? "The AI model is temporarily overloaded. Please try again." 
-                : "An error occurred while calculating scores."
-              }
-            </p>
+            {isRateLimitError(scoreError) ? <Zap className="h-8 w-8 mb-2" /> : <AlertTriangle className="h-8 w-8 mb-2" />}
+            <p className="text-sm font-semibold">{errorTitle}</p>
+            <p className="text-xs mt-1">{errorDescription}</p>
             <div className="mt-2 flex gap-2">
                 <TooltipProvider>
                     <Tooltip delayDuration={100}>
@@ -147,7 +159,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <TrendingUp className="h-4 w-4" />
-                    <span>5-Day Avg:</span>
+                    <span>{historicalScores.length}-Day Avg:</span>
                   </div>
                   <span className="font-semibold text-foreground">{averageHistoricalScore?.toFixed(1) ?? "N/A"}</span>
                 </div>
@@ -177,7 +189,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
 
 
           </>
-        ) : ( // Non-HR view or data not yet loaded for HR
+        ) : ( 
            <div className="flex flex-col items-center justify-center flex-grow">
              <Badge variant="outline" className={getStatusBadgeClasses(statusText)}>
                 <StatusIcon className="mr-1 h-3.5 w-3.5" />
@@ -192,3 +204,4 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
     </Card>
   );
 }
+
