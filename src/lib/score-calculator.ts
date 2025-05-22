@@ -25,8 +25,8 @@ interface ContributingFactors {
   typeSwitches: number;
   multiplePlatformsUsed: boolean;
   highActivityDensityPeriods: number;
-  activitiesProcessed: number; // To track if any activities were processed
-  [key: string]: number | boolean; // Allow other string keys
+  activitiesProcessed: number; 
+  [key: string]: number | boolean; 
 }
 
 export function calculateScoreAlgorithmically(
@@ -37,7 +37,7 @@ export function calculateScoreAlgorithmically(
   if (!activities || activities.length === 0) {
     return {
       userId,
-      fragmentationScore: 0.0, // Changed from 0.5 to 0.0
+      fragmentationScore: 0.0,
       summary: `No activities tracked for this period.`,
       riskLevel: 'Low',
       activitiesCount: 0,
@@ -55,7 +55,6 @@ export function calculateScoreAlgorithmically(
     activitiesProcessed: activities.length,
   };
 
-  // Sort activities by timestamp to correctly identify switches
   const sortedActivities = [...activities].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
@@ -71,6 +70,7 @@ export function calculateScoreAlgorithmically(
 
     // Jira Task Updates
     if (activity.source === 'jira' && activity.type.startsWith('jira_issue')) {
+      console.log(`SCORE_CALC: Processing Jira activity for user ${userId}: ${activity.details}`); // Added log
       score += FACTOR_WEIGHTS.JIRA_TASK_UPDATE;
       contributingFactors.jiraTaskUpdates++;
     }
@@ -81,43 +81,36 @@ export function calculateScoreAlgorithmically(
         score += FACTOR_WEIGHTS.SOURCE_SWITCH;
         contributingFactors.sourceSwitches++;
       } else if (activity.type !== previousActivity.type && activity.type !== 'teams_presence_update' && previousActivity.type !== 'teams_presence_update') {
-        // Don't count presence updates as type switches for this logic
         score += FACTOR_WEIGHTS.TYPE_SWITCH_SAME_SOURCE;
         contributingFactors.typeSwitches++;
       }
     }
-    // Avoid counting presence updates as the "previous activity" for switch calculations if it's the only thing
     if (activity.type !== 'teams_presence_update') {
         previousActivity = activity;
     }
   }
 
-  // Multi-platform usage
   const uniqueSources = new Set(activities.map(a => a.source));
   if (uniqueSources.size > 2) {
     score += FACTOR_WEIGHTS.MULTI_PLATFORM_USAGE_BONUS;
     contributingFactors.multiplePlatformsUsed = true;
   }
   
-  // Activity Density
   if (activities.length > FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD * activityWindowDays) {
     score += FACTOR_WEIGHTS.ACTIVITY_DENSITY_BONUS;
-    contributingFactors.highActivityDensityPeriods = 1; // Simplified
+    contributingFactors.highActivityDensityPeriods = 1; 
   }
 
-
-  // Cap and round the score
   score = Math.min(5.0, Math.max(0.0, score));
-  // If score is very low (e.g. from only a single, minor activity), but not zero-activity, ensure it's at least above the "no activity" score.
-  // With 0 activity now scoring 0.0, any activity should result in a score > 0.
-  if (activities.length > 0 && score === 0) { // If logic somehow results in 0 with activities
-    score = 0.1; // Ensure a minimal score if any activity exists and calculation resulted in 0
+  if (activities.length > 0 && score > 0 && score < 0.6) { 
+    score = 0.6; 
+  } else if (activities.length > 0 && score === 0.0) { // If logic results in 0 with activities, nudge up
+    score = 0.1;
   }
 
 
   const finalScore = parseFloat(score.toFixed(1));
 
-  // Determine Risk Level
   let riskLevel: 'Low' | 'Moderate' | 'High';
   if (finalScore >= RISK_THRESHOLDS.HIGH) {
     riskLevel = 'High';
@@ -127,10 +120,12 @@ export function calculateScoreAlgorithmically(
     riskLevel = 'Low';
   }
 
-  // Generate Summary
   let summaryParts: string[] = [];
-  if (finalScore === 0.0 && activities.length === 0) { // Adjusted condition
+  if (finalScore === 0.0 && activities.length === 0) {
      summaryParts.push(`No activities tracked for this period.`);
+  } else if (finalScore <= 0.5 && activities.length > 0 && !Object.values(contributingFactors).some(v => typeof v === 'number' && v > 0) && contributingFactors.jiraTaskUpdates === 0 && contributingFactors.meetings === 0){
+    // This condition might be too complex now, simplify
+    summaryParts.push("Minimal activity detected, resulting in a low score.");
   } else {
     if (contributingFactors.jiraTaskUpdates > 0) {
       summaryParts.push(`${contributingFactors.jiraTaskUpdates} Jira task activit${contributingFactors.jiraTaskUpdates === 1 ? 'y' : 'ies'}`);
@@ -151,7 +146,7 @@ export function calculateScoreAlgorithmically(
       summaryParts.push(`periods of high activity density`);
     }
 
-    if (summaryParts.length === 0 && finalScore <= 1.0 && finalScore > 0.0) { // Ensure it's not 0.0 for this summary
+    if (summaryParts.length === 0 && finalScore <= 1.0 && finalScore > 0.0) { 
         summaryParts.push("low overall activity levels.");
     } else if (summaryParts.length === 0 && finalScore > 1.0) {
         summaryParts.push("general activity patterns.");
@@ -161,7 +156,7 @@ export function calculateScoreAlgorithmically(
   let summary = `Score of ${finalScore} (${riskLevel}). `;
   if (summaryParts.length > 0) {
      summary += "Key factors: " + summaryParts.join(', ') + ".";
-  } else if (activities.length > 0) { // If activities are present but no specific factors were prominent
+  } else if (activities.length > 0) { 
     summary += "Calculated based on general activity level."
   }
 
