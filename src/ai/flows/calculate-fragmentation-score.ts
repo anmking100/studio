@@ -24,9 +24,6 @@ const CalculateFragmentationScoreInputSchema = z.object({
   userId: z.string().describe("The ID of the user whose activity is being analyzed."),
   activityWindowDays: z.number().default(7).describe("The number of days of activity to consider (e.g., last 7 days)."),
   activities: z.array(GenericActivityItemSchema).describe("A list of user activities from various sources like Teams, Jira, etc."),
-  // Add more specific data structures as needed, e.g.:
-  // teamsMeetings: z.array(z.object({startTime: z.string(), durationMinutes: z.number(), subject: z.string()})).optional(),
-  // jiraIssueUpdates: z.array(z.object({updatedAt: z.string(), issueKey: z.string(), summary: z.string()})).optional(),
 });
 export type CalculateFragmentationScoreInput = z.infer<typeof CalculateFragmentationScoreInputSchema>;
 
@@ -92,24 +89,54 @@ const calculateFragmentationScoreFlow = ai.defineFlow(
     outputSchema: CalculateFragmentationScoreOutputSchema,
   },
   async (input) => {
-    // In a real scenario, you might pre-process activities here or add more complex logic.
-    // For instance, if activities list is very long, summarize it or select key events before passing to LLM.
-
+    console.log(`Calculating fragmentation score for user: ${input.userId} with ${input.activities.length} activities.`);
     const {output} = await prompt(input);
+
     if (!output) {
-        // Fallback or error handling if LLM returns no output
-        console.error("LLM did not return an output for calculateFragmentationScoreFlow");
+        console.error(`LLM did not return a structured (or parsable) output for calculateFragmentationScoreFlow. UserID: ${input.userId}. Input activities count: ${input.activities.length}. Input details:`, JSON.stringify(input, null, 2));
         const risk = input.activities.length === 0 ? "Moderate" : "High";
         const score = input.activities.length === 0 ? 2.0 : 4.0;
         return {
             userId: input.userId,
             fragmentationScore: score,
-            summary: "Could not reliably calculate fragmentation score due to an internal error or lack of activity data. Default score assigned.",
+            summary: "Could not reliably calculate fragmentation score: AI model did not return a valid structured output. A default score has been assigned based on activity count.",
             riskLevel: risk as "Low" | "Moderate" | "High",
         };
     }
-    // Ensure score is within bounds and has one decimal place
-    output.fragmentationScore = parseFloat(Math.min(5, Math.max(0, output.fragmentationScore)).toFixed(1));
-    return output;
+
+    let finalScore: number;
+    let currentSummary = output.summary;
+    let currentRiskLevel = output.riskLevel;
+
+    if (typeof output.fragmentationScore === 'number' && !isNaN(output.fragmentationScore)) {
+        finalScore = parseFloat(Math.min(5, Math.max(0, output.fragmentationScore)).toFixed(1));
+        if (isNaN(finalScore)) { // Check if toFixed or parseFloat resulted in NaN
+            console.error(`Score parsing resulted in NaN for user: ${input.userId}. Original score: ${output.fragmentationScore}. Using default score 3.0.`);
+            finalScore = 3.0; // Fallback score
+            currentSummary = `AI returned a score (${output.fragmentationScore}) that led to a calculation error. Default score ${finalScore} assigned. Original summary: ${output.summary || 'N/A'}`;
+            currentRiskLevel = finalScore <= 1.9 ? "Low" : finalScore <= 3.4 ? "Moderate" : "High";
+        }
+    } else {
+        console.error(`LLM returned an invalid or non-numeric fragmentationScore: '${output.fragmentationScore}' (type: ${typeof output.fragmentationScore}) for user: ${input.userId}. Using default score 2.5.`);
+        finalScore = 2.5; // Default score due to invalid type
+        currentSummary = `AI model returned an invalid score value ('${output.fragmentationScore}'). Default score ${finalScore} assigned. Original summary: ${output.summary || 'N/A'}`;
+        currentRiskLevel = finalScore <= 1.9 ? "Low" : finalScore <= 3.4 ? "Moderate" : "High";
+    }
+    
+    // Final sanity check for NaN score
+    if (isNaN(finalScore)) {
+        console.error(`Critical: Final score is NaN for userId: ${input.userId}. Hard fallback to 2.0. Investigate immediately.`);
+        finalScore = 2.0; 
+        currentSummary = `Score calculation resulted in NaN. A hard fallback score of ${finalScore} was assigned. Original summary: ${output.summary || 'N/A'}`;
+        currentRiskLevel = "Moderate";
+    }
+
+    return {
+      userId: input.userId, // Always use the input userId
+      fragmentationScore: finalScore,
+      summary: currentSummary,
+      riskLevel: currentRiskLevel,
+    };
   }
 );
+

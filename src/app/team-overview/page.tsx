@@ -27,7 +27,7 @@ export default function TeamOverviewPage() {
   const { user } = useAuth();
   const isHR = user?.role === 'hr';
   const [teamData, setTeamData] = useState<TeamMemberFocus[]>([]);
-  const [isLoadingUsers, setIsLoadingUsers] = useState(isHR); // True if HR, to trigger user fetching
+  const [isLoadingUsers, setIsLoadingUsers] = useState(isHR); 
   const [userFetchError, setUserFetchError] = useState<string | null>(null);
   const [isCalculatingScores, setIsCalculatingScores] = useState(false);
 
@@ -49,17 +49,17 @@ export default function TeamOverviewPage() {
             id: msUser.id,
             name: msUser.displayName || msUser.userPrincipalName,
             email: msUser.userPrincipalName,
-            role: 'developer', // Default role for MS Graph users in this context
-            fragmentationScore: 0, // Placeholder, will be calculated
-            lastWeekTrend: 0, // Placeholder
-            overloadStatus: 'Stable', // Placeholder
-            avatarUrl: `https://placehold.co/100x100.png?text=${(msUser.displayName || msUser.userPrincipalName)?.[0]?.toUpperCase() || 'U'}`, // Basic avatar
-            isLoadingScore: true,
+            // For simplicity, assign a default role. In a real app, this might come from MS Graph groups or another source.
+            role: (msUser.userPrincipalName.toLowerCase().includes('hr')) ? 'hr' : 'developer', 
+            fragmentationScore: 0, // Placeholder, will be calculated by AI
+            lastWeekTrend: 0, // Placeholder, could be calculated from historical scores
+            overloadStatus: 'Stable', // Placeholder, will be derived from AI riskLevel
+            avatarUrl: `https://placehold.co/100x100.png?text=${(msUser.displayName || msUser.userPrincipalName)?.[0]?.toUpperCase() || 'U'}`,
+            isLoadingScore: true, // Mark as true to trigger AI calculation
             scoreError: null,
           }));
           setTeamData(initialTeamData);
           setIsLoadingUsers(false);
-          // Trigger score calculation after users are fetched
           if (initialTeamData.length > 0) {
             setIsCalculatingScores(true); 
           }
@@ -77,7 +77,6 @@ export default function TeamOverviewPage() {
     if (isHR && isCalculatingScores && teamData.length > 0 && teamData.some(m => m.isLoadingScore)) {
       const calculateScoresForAllMembers = async () => {
         const updatedTeamDataPromises = teamData.map(async (member) => {
-          // If score is already calculated or there was an error, skip
           if (!member.isLoadingScore || member.scoreError) return member;
 
           try {
@@ -87,7 +86,9 @@ export default function TeamOverviewPage() {
               activityWindowDays: 7,
               activities: activities,
             };
+            console.log(`Requesting score calculation for ${member.name} (ID: ${member.id})`);
             const result = await calculateFragmentationScore(input);
+            console.log(`Score calculated for ${member.name} (ID: ${member.id}):`, result);
             return {
               ...member,
               aiCalculatedScore: result.fragmentationScore,
@@ -97,18 +98,20 @@ export default function TeamOverviewPage() {
               scoreError: null,
             };
           } catch (err) {
-            console.error(`Error calculating score for ${member.name}:`, err);
+            console.error(`Error calculating score for ${member.name} (ID: ${member.id}):`, err);
+            const errorMessage = err instanceof Error ? err.message : "Failed to calculate score due to an unknown error.";
             return {
               ...member,
               isLoadingScore: false,
-              scoreError: "Failed to calculate score.",
+              scoreError: errorMessage,
+              aiSummary: `Error: ${errorMessage}`, // Provide error in summary for visibility
+              aiRiskLevel: "High", // Default to high risk on error
             };
           }
         });
 
         const settledTeamData = await Promise.all(updatedTeamDataPromises);
         setTeamData(settledTeamData);
-        // Check if all scores are done
         if (settledTeamData.every(m => !m.isLoadingScore)) {
             setIsCalculatingScores(false);
         }
@@ -119,11 +122,11 @@ export default function TeamOverviewPage() {
   }, [isHR, teamData, isCalculatingScores]);
   
   const teamStats = teamData.reduce((acc, member) => {
-    if (member.isLoadingScore || member.scoreError) return acc; // Don't count loading/error states in stats
+    if (member.isLoadingScore || member.scoreError) return acc;
 
     const status = member.aiRiskLevel ? 
                    (member.aiRiskLevel === 'Low' ? 'Stable' : member.aiRiskLevel === 'Moderate' ? 'At Risk' : 'Overloaded') 
-                   : 'Stable'; // Default if no AI risk level
+                   : 'Stable'; 
     if (status === "Stable") acc.stable++;
     else if (status === "At Risk") acc.atRisk++;
     else if (status === "Overloaded") acc.overloaded++;
@@ -181,15 +184,26 @@ export default function TeamOverviewPage() {
         </Alert>
       )}
 
-      {isHR && !isLoadingUsers && !userFetchError && isCalculatingScores && (
+      {isHR && !isLoadingUsers && !userFetchError && isCalculatingScores && teamData.some(m => m.isLoadingScore) && (
         <Alert variant="default" className="shadow-md border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-500" />
           <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Calculating Scores</AlertTitle>
           <AlertDescription className="text-blue-600 dark:text-blue-500">
-            The AI is currently calculating fragmentation scores for team members. This may take a moment...
+            The AI is currently calculating fragmentation scores for team members. This may take a moment... ({teamData.filter(m=>m.isLoadingScore).length} remaining)
           </AlertDescription>
         </Alert>
       )}
+      
+      {isHR && !isLoadingUsers && !userFetchError && !isCalculatingScores && teamData.length > 0 && !teamData.some(m=>m.isLoadingScore) && (
+         <Alert variant="default" className="shadow-md border-green-500/50 text-green-700 dark:border-green-400/50 dark:text-green-400">
+          <ShieldCheck className="h-5 w-5 text-green-600 dark:text-green-500" />
+          <AlertTitle className="font-semibold text-green-700 dark:text-green-400">Calculations Complete</AlertTitle>
+          <AlertDescription className="text-green-600 dark:text-green-500">
+            All fragmentation scores have been calculated.
+          </AlertDescription>
+        </Alert>
+      )}
+
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
         <Card className="shadow-md">
@@ -235,7 +249,7 @@ export default function TeamOverviewPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {isHR && !isLoadingUsers && !userFetchError && teamData.length === 0 && (
+          {isHR && !isLoadingUsers && !userFetchError && teamData.length === 0 && !isCalculatingScores && (
              <Alert className="col-span-full">
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>No Users Found in Microsoft Graph</AlertTitle>
@@ -247,10 +261,17 @@ export default function TeamOverviewPage() {
           {teamData.map((member) => (
             <TeamMemberCard key={member.id} member={member} showDetailedScore={isHR} />
           ))}
+           {!isHR && teamData.length === 0 && ( // Show this for non-HR if teamData is empty (e.g., if MS Graph fetch wasn't even attempted)
+            <Alert className="col-span-full">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>No Team Data Available</AlertTitle>
+              <AlertDescription>
+                Team overview data is not available for your role or could not be loaded.
+              </AlertDescription>
+            </Alert>
+          )}
         </CardContent>
       </Card>
     </div>
   );
 }
-
-    
