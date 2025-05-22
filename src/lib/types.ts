@@ -13,6 +13,8 @@ export interface User {
 export interface FragmentationDataPoint {
   date: string; // YYYY-MM-DD
   score: number;
+  summary?: string; // AI generated summary
+  riskLevel?: 'Low' | 'Moderate' | 'High'; // AI assessed risk level
 }
 
 export interface TeamMemberFocus extends User {

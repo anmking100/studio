@@ -1,18 +1,29 @@
+
 "use client";
 
 import { FragmentationScoreCard } from "@/components/dashboard/fragmentation-score-card";
 import { FocusTrendsChart } from "@/components/dashboard/focus-trends-chart";
 import { AnomalyAlert } from "@/components/dashboard/anomaly-alert";
-import { mockFragmentationScores, mockCurrentFragmentationScore } from "@/lib/mock-data";
+import { mockFragmentationScores } from "@/lib/mock-data"; // Keep for trends chart and previous score
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Lightbulb, CheckSquare } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Lightbulb, CheckSquare, Loader2, AlertTriangle, Info } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { 
+  calculateFragmentationScore, 
+  type CalculateFragmentationScoreInput,
+  type CalculateFragmentationScoreOutput 
+} from "@/ai/flows/calculate-fragmentation-score";
+import type { GenericActivityItem } from "@/lib/types";
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const [randomTip, setRandomTip] = useState("");
+  const [currentFragmentationData, setCurrentFragmentationData] = useState<CalculateFragmentationScoreOutput | null>(null);
+  const [isLoadingScore, setIsLoadingScore] = useState(true);
+  const [scoreError, setScoreError] = useState<string | null>(null);
 
   useEffect(() => {
     const productivityTips = [
@@ -23,12 +34,45 @@ export default function DashboardPage() {
       "Take short breaks every hour to rest your mind."
     ];
     setRandomTip(productivityTips[Math.floor(Math.random() * productivityTips.length)]);
-  }, []);
+
+    const fetchScore = async () => {
+      if (!user) return;
+
+      setIsLoadingScore(true);
+      setScoreError(null);
+
+      // Mock activities - in a real app, this would be fetched from backend integrations
+      const mockActivities: GenericActivityItem[] = [
+        { type: 'meeting', timestamp: new Date(Date.now() - 2 * 3600000).toISOString(), details: 'Project Alpha Sync', source: 'teams' },
+        { type: 'task_update', timestamp: new Date(Date.now() - 1 * 3600000).toISOString(), details: 'Updated JIRA-123 to In Progress', source: 'jira' },
+        { type: 'email_sent', timestamp: new Date(Date.now() - 0.5 * 3600000).toISOString(), details: 'Follow-up with client on proposal', source: 'm365' },
+        { type: 'code_commit', timestamp: new Date(Date.now() - 3 * 3600000).toISOString(), details: 'Feature: User profile page', source: 'other' }, // Assuming 'other' for GitHub etc.
+        { type: 'meeting', timestamp: new Date(Date.now() - 24 * 3600000).toISOString(), details: 'Daily Stand-up', source: 'teams' },
+      ];
+
+      const input: CalculateFragmentationScoreInput = {
+        userId: user.id,
+        activityWindowDays: 1, // Looking at today's mock activities
+        activities: mockActivities,
+      };
+
+      try {
+        const result = await calculateFragmentationScore(input);
+        setCurrentFragmentationData(result);
+      } catch (err) {
+        console.error("Error calculating fragmentation score:", err);
+        setScoreError("Failed to calculate your fragmentation score. Please try again later.");
+      } finally {
+        setIsLoadingScore(false);
+      }
+    };
+
+    fetchScore();
+  }, [user]);
   
   // Use last 14 days of data for the chart
   const recentFragmentationScores = mockFragmentationScores.slice(-14);
   const previousScore = recentFragmentationScores.length > 1 ? recentFragmentationScores.slice(-2)[0].score : undefined;
-
 
   return (
     <div className="space-y-6">
@@ -57,12 +101,58 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1">
-          <FragmentationScoreCard currentScore={mockCurrentFragmentationScore} previousScore={previousScore} />
+          {isLoadingScore && (
+            <Card className="shadow-lg flex items-center justify-center min-h-[200px]">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="ml-2 text-muted-foreground">Calculating score...</p>
+            </Card>
+          )}
+          {scoreError && !isLoadingScore && (
+            <Alert variant="destructive" className="shadow-lg min-h-[200px]">
+              <AlertTriangle className="h-5 w-5" />
+              <AlertTitle>Score Error</AlertTitle>
+              <AlertDescription>{scoreError}</AlertDescription>
+            </Alert>
+          )}
+          {!isLoadingScore && !scoreError && currentFragmentationData && (
+            <FragmentationScoreCard 
+              currentScore={currentFragmentationData.fragmentationScore} 
+              previousScore={previousScore}
+              riskLevel={currentFragmentationData.riskLevel}
+              summary={currentFragmentationData.summary}
+            />
+          )}
+           {!isLoadingScore && !scoreError && !currentFragmentationData && (
+             <Card className="shadow-lg flex flex-col items-center justify-center min-h-[200px] text-center p-4">
+                <Info className="h-8 w-8 text-muted-foreground mb-2" />
+                <CardTitle className="text-lg">Fragmentation Score</CardTitle>
+                <CardDescription className="text-sm text-muted-foreground">Could not load fragmentation score data.</CardDescription>
+            </Card>
+           )}
         </div>
         <div className="lg:col-span-2">
           <AnomalyAlert fragmentationScores={recentFragmentationScores} />
         </div>
       </div>
+      
+      {currentFragmentationData && !isLoadingScore && !scoreError && (
+        <Card className="shadow-md hover:shadow-lg transition-shadow duration-300">
+          <CardHeader>
+            <CardTitle className="text-xl font-semibold">AI Focus Summary</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <AlertDescription className="text-muted-foreground whitespace-pre-wrap">{currentFragmentationData.summary}</AlertDescription>
+             <p className="mt-2 text-sm font-medium">Risk Level: 
+              <span className={`font-bold ${
+                currentFragmentationData.riskLevel === 'High' ? 'text-destructive' :
+                currentFragmentationData.riskLevel === 'Moderate' ? 'text-yellow-600' : 'text-green-600'
+              }`}> {currentFragmentationData.riskLevel}
+              </span>
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
 
       <FocusTrendsChart data={recentFragmentationScores} />
       
