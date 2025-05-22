@@ -1,4 +1,6 @@
 
+'use server';
+
 import {NextRequest, NextResponse} from 'next/server';
 import type { GenericActivityItem } from '@/lib/types';
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
@@ -37,8 +39,8 @@ function mapJiraIssueToActivity(issue: JiraIssue): GenericActivityItem {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const userEmail = searchParams.get('userEmail');
-  const startDateParam = searchParams.get('startDate'); // YYYY-MM-DD
-  const endDateParam = searchParams.get('endDate');   // YYYY-MM-DD
+  const startDateParam = searchParams.get('startDate'); // Expect ISOString
+  const endDateParam = searchParams.get('endDate');   // Expect ISOString
 
   if (!JIRA_INSTANCE_URL || !JIRA_USERNAME || !JIRA_API_TOKEN) {
     console.error("Jira API integration not configured on server. Missing JIRA_INSTANCE_URL, JIRA_USERNAME, or JIRA_API_TOKEN.");
@@ -55,16 +57,21 @@ export async function GET(request: NextRequest) {
   let jql = `assignee = "${userEmail}"`;
 
   if (startDateParam && endDateParam) {
-    // Filter for a specific day
-    const S_DATE = format(new Date(startDateParam), "yyyy-MM-dd");
-    const E_DATE = format(new Date(endDateParam), "yyyy-MM-dd");
-    jql += ` AND updated >= "${S_DATE} 00:00" AND updated <= "${E_DATE} 23:59"`;
-    console.log(`Jira: Fetching for ${userEmail} between ${S_DATE} and ${E_DATE}`);
+    try {
+        // Format to YYYY-MM-DD HH:mm for JQL
+        const formattedStartDate = format(new Date(startDateParam), "yyyy-MM-dd HH:mm");
+        const formattedEndDate = format(new Date(endDateParam), "yyyy-MM-dd HH:mm");
+        jql += ` AND updated >= "${formattedStartDate}" AND updated <= "${formattedEndDate}"`;
+        console.log(`Jira: Fetching for ${userEmail} between ${formattedStartDate} and ${formattedEndDate}`);
+    } catch (e) {
+        return NextResponse.json({ error: "Invalid date format for startDate or endDate. Please use ISO string." }, { status: 400 });
+    }
   } else {
     // Default to last 7 days if no specific date range
-    const sevenDaysAgo = format(subDays(new Date(), 7), "yyyy-MM-dd");
-    jql += ` AND updated >= "${sevenDaysAgo}"`;
-     console.log(`Jira: Fetching for ${userEmail} for last 7 days (default)`);
+    const sevenDaysAgo = format(subDays(new Date(), 7), "yyyy-MM-dd HH:mm");
+    const now = format(new Date(), "yyyy-MM-dd HH:mm");
+    jql += ` AND updated >= "${sevenDaysAgo}" AND updated <= "${now}"`;
+    console.log(`Jira: Fetching for ${userEmail} for last 7 days (default range: ${sevenDaysAgo} to ${now})`);
   }
   jql += ` ORDER BY updated DESC`;
   
@@ -104,3 +111,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+    

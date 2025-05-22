@@ -1,4 +1,6 @@
 
+'use server';
+
 import {NextRequest, NextResponse} from 'next/server';
 import * as msal from '@azure/msal-node';
 import type { GenericActivityItem } from '@/lib/types';
@@ -52,12 +54,12 @@ interface GraphCalendarEvent {
   type?: string; 
 }
 
-function mapPresenceToActivity(presence: GraphPresence, userId: string, eventDate: Date): GenericActivityItem | null {
-  // Presence is real-time, so it's only truly relevant for "today".
-  // For historical days, we can't get past presence. So, we only add presence if the eventDate is today.
+function mapPresenceToActivity(presence: GraphPresence, userId: string, eventDateISO: string): GenericActivityItem | null {
   const today = new Date();
+  const targetDate = new Date(eventDateISO);
+  // Presence is real-time, so it's only truly relevant if the targetDate is today.
   if (presence.availability === 'Offline' || presence.availability === 'PresenceUnknown' || 
-      eventDate.toDateString() !== today.toDateString()) {
+      targetDate.toDateString() !== today.toDateString()) {
     return null;
   }
   return {
@@ -80,8 +82,8 @@ function mapCalendarEventToActivity(event: GraphCalendarEvent): GenericActivityI
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const userId = searchParams.get('userId');
-  const startDateParam = searchParams.get('startDate'); // YYYY-MM-DD
-  const endDateParam = searchParams.get('endDate');   // YYYY-MM-DD
+  const startDateParam = searchParams.get('startDate'); // Expect ISOString
+  const endDateParam = searchParams.get('endDate');   // Expect ISOString
 
   if (!TENANT_ID || !CLIENT_ID || !CLIENT_SECRET) {
     console.error("Microsoft Graph API (for Teams activity) not configured on server. Missing MS_TENANT_ID, MS_CLIENT_ID, or MS_CLIENT_SECRET.");
@@ -95,23 +97,29 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "User ID (userId) is required." }, { status: 400 });
   }
 
-  let dayToFetch: Date;
   let startDateTimeFilter: string;
   let endDateTimeFilter: string;
+  let targetDateForPresenceCheckISO: string;
 
   if (startDateParam && endDateParam) {
-    dayToFetch = new Date(startDateParam); // Use startDateParam to represent the day for presence check
-    startDateTimeFilter = startOfDay(new Date(startDateParam)).toISOString();
-    endDateTimeFilter = endOfDay(new Date(endDateParam)).toISOString();
-    console.log(`Teams/M365: Fetching for user ${userId} for day ${startDateParam}`);
+    try {
+        startDateTimeFilter = new Date(startDateParam).toISOString();
+        endDateTimeFilter = new Date(endDateParam).toISOString();
+        targetDateForPresenceCheckISO = startDateParam; // Use the start of the window for presence check logic
+        console.log(`Teams/M365: Fetching for user ${userId} for period ${startDateTimeFilter} to ${endDateTimeFilter}`);
+    } catch (e) {
+        return NextResponse.json({ error: "Invalid date format for startDate or endDate. Please use ISO string." }, { status: 400 });
+    }
   } else {
-    // Default to today for presence and last 7 days for calendar if no specific date
-    dayToFetch = new Date();
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    // Default to last 7 days for calendar if no specific date
+    // This default case might need reconsideration if always expecting precise ranges from frontend
+    const now = new Date();
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(now.getDate() - 7);
     startDateTimeFilter = sevenDaysAgo.toISOString();
-    endDateTimeFilter = new Date().toISOString();
-     console.log(`Teams/M365: Fetching for user ${userId} for last 7 days (default)`);
+    endDateTimeFilter = now.toISOString();
+    targetDateForPresenceCheckISO = now.toISOString();
+    console.log(`Teams/M365: Fetching for user ${userId} for last 7 days (default range: ${startDateTimeFilter} to ${endDateTimeFilter})`);
   }
 
 
@@ -120,28 +128,26 @@ export async function GET(request: NextRequest) {
     const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
     let activities: GenericActivityItem[] = [];
 
-    // 1. Fetch Presence (only relevant if dayToFetch is today)
-    if (dayToFetch.toDateString() === new Date().toDateString()) {
-        const presenceUrl = `https://graph.microsoft.com/v1.0/users/${userId}/presence`;
-        console.log(`Fetching Teams presence for user ${userId} from ${presenceUrl}`);
-        const presenceResponse = await fetch(presenceUrl, { headers });
-        if (presenceResponse.ok) {
-        const presenceData: GraphPresence = await presenceResponse.json();
-        const presenceActivity = mapPresenceToActivity(presenceData, userId, dayToFetch);
-        if (presenceActivity) activities.push(presenceActivity);
-        console.log(`Fetched presence for ${userId}: ${presenceData.availability}`);
-        } else {
-        const errorText = await presenceResponse.text();
-        console.warn(`Could not fetch Teams presence for user ${userId}: Status ${presenceResponse.status}, Body: ${errorText.substring(0,200)}`);
-        }
+    // 1. Fetch Presence (only relevant if targetDateForPresenceCheckISO indicates today)
+    // The mapPresenceToActivity function handles the "is today" logic.
+    const presenceUrl = `https://graph.microsoft.com/v1.0/users/${userId}/presence`;
+    console.log(`Fetching Teams presence for user ${userId} from ${presenceUrl}`);
+    const presenceResponse = await fetch(presenceUrl, { headers });
+    if (presenceResponse.ok) {
+    const presenceData: GraphPresence = await presenceResponse.json();
+    const presenceActivity = mapPresenceToActivity(presenceData, userId, targetDateForPresenceCheckISO);
+    if (presenceActivity) activities.push(presenceActivity);
+    console.log(`Fetched presence for ${userId}: ${presenceData.availability}`);
     } else {
-        console.log(`Teams/M365: Skipping presence fetch for user ${userId} as it's for a past date (${startDateParam}).`);
+    const errorText = await presenceResponse.text();
+    console.warn(`Could not fetch Teams presence for user ${userId}: Status ${presenceResponse.status}, Body: ${errorText.substring(0,200)}`);
     }
+    
 
     // 2. Fetch Calendar Events for the specified day or default range
-    const calendarUrl = `https://graph.microsoft.com/v1.0/users/${userId}/calendarView?startDateTime=${startDateTimeFilter}&endDateTime=${endDateTimeFilter}&$select=id,subject,start,end,organizer,isAllDay,type&$top=50`;
+    const calendarUrl = `https://graph.microsoft.com/v1.0/users/${userId}/calendarView?startDateTime=${encodeURIComponent(startDateTimeFilter)}&endDateTime=${encodeURIComponent(endDateTimeFilter)}&$select=id,subject,start,end,organizer,isAllDay,type&$top=50`;
     
-    console.log(`Fetching Teams calendar events for user ${userId} from (approx) ${calendarUrl.split('?')[0]}`);
+    console.log(`Fetching Teams calendar events for user ${userId} from (approx) ${calendarUrl.split('?')[0]} with params: startDateTime=${startDateTimeFilter}, endDateTime=${endDateTimeFilter}`);
     const calendarResponse = await fetch(calendarUrl, { headers });
     if (calendarResponse.ok) {
       const calendarData = await calendarResponse.json();
@@ -170,3 +176,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+    
