@@ -4,10 +4,11 @@
 import type { TeamMemberFocus } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge, type BadgeProps } from "@/components/ui/badge";
-import { UserCircle, AlertTriangle, ShieldCheck, Activity, Loader2, Info, Briefcase, MessageSquare } from "lucide-react";
+import { Badge } from "@/components/ui/badge"; // Removed type BadgeProps as it's not directly used
+import { UserCircle, AlertTriangle, ShieldCheck, Activity, Loader2, Info, Briefcase, MessageSquare, RefreshCw } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 
 interface TeamMemberCardProps {
   member: TeamMemberFocus;
@@ -27,8 +28,8 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
     activityError 
   } = member;
 
-  const currentScore = showDetailedScore && aiCalculatedScore !== undefined ? aiCalculatedScore : 0; // Default to 0 if not available
-  const currentRiskLevel = showDetailedScore && aiRiskLevel ? aiRiskLevel : 'Stable'; // Default if not HR or not calculated
+  const currentScore = showDetailedScore && aiCalculatedScore !== undefined ? aiCalculatedScore : 0;
+  const currentRiskLevel = showDetailedScore && aiRiskLevel ? aiRiskLevel : 'Stable';
   const currentSummary = showDetailedScore ? aiSummary : undefined;
 
   let StatusIcon = ShieldCheck;
@@ -37,7 +38,6 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
   if (currentRiskLevel === 'Low') { statusText = 'Stable'; StatusIcon = ShieldCheck; }
   else if (currentRiskLevel === 'Moderate') { statusText = 'At Risk'; StatusIcon = Activity; }
   else if (currentRiskLevel === 'High') { statusText = 'Overloaded'; StatusIcon = AlertTriangle; }
-  // Default case, if aiRiskLevel is somehow not one of these
   else { statusText = 'Stable'; StatusIcon = ShieldCheck;}
 
 
@@ -45,7 +45,7 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
     if (status === "Stable") return "border-green-500 text-green-600 dark:border-green-400 dark:text-green-500 bg-green-500/10";
     if (status === "At Risk") return "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-500 bg-yellow-500/10"; 
     if (status === "Overloaded") return "border-destructive text-destructive bg-destructive/10"; 
-    return "border-muted text-muted-foreground"; // Fallback for unknown status
+    return "border-muted text-muted-foreground";
   };
 
   const scorePercentage = (currentScore / 5) * 100;
@@ -58,6 +58,15 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
 
   const overallLoading = isLoadingScore || isLoadingActivities;
 
+  const isAiOverloadedError = (errorMsg?: string | null): boolean => {
+    if (!errorMsg) return false;
+    return errorMsg.includes("model is overloaded") || errorMsg.includes("503 Service Unavailable");
+  };
+
+  let displayedError = "";
+  if (scoreError) displayedError = scoreError;
+  if (activityError && !displayedError) displayedError = activityError; // Prefer scoreError if both exist
+
   return (
     <Card className="shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col min-h-[250px]">
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
@@ -66,8 +75,8 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
           <p className="text-xs text-muted-foreground truncate" title={member.email}>{member.email}</p>
         </div>
         <Avatar className="h-10 w-10 ml-2 shrink-0">
-          <AvatarImage src={avatarUrl || `https://placehold.co/100x100.png?text=${name[0]}`} alt={name} data-ai-hint="user avatar" />
-          <AvatarFallback>{name[0]?.toUpperCase() || <UserCircle/>}</AvatarFallback>
+          <AvatarImage src={avatarUrl || `https://placehold.co/100x100.png?text=${name?.[0]}`} alt={name} data-ai-hint="user avatar" />
+          <AvatarFallback>{name?.[0]?.toUpperCase() || <UserCircle/>}</AvatarFallback>
         </Avatar>
       </CardHeader>
       <CardContent className="space-y-2 flex-grow flex flex-col justify-between">
@@ -78,20 +87,27 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
                 {isLoadingActivities ? "Fetching activities..." : "Calculating score..."}
             </p>
           </div>
-        ) : (scoreError || activityError) && showDetailedScore ? (
+        ) : (displayedError) && showDetailedScore ? (
           <div className="flex flex-col items-center justify-center flex-grow text-destructive p-2 text-center">
             <AlertTriangle className="h-8 w-8 mb-2" />
-            <p className="text-sm font-semibold">Error Processing</p>
-            {activityError && <p className="text-xs mt-1">Activity Fetch: {activityError.substring(0,100)}...</p>}
-            {scoreError && <p className="text-xs mt-1">Score Calc: {scoreError.substring(0,100)}...</p>}
+            <p className="text-sm font-semibold">
+              {isAiOverloadedError(displayedError) ? "AI Model Busy" : "Error Processing"}
+            </p>
+            <p className="text-xs mt-1">
+              {isAiOverloadedError(displayedError) 
+                ? "The AI model is temporarily overloaded. Please try again later." 
+                : (activityError && scoreError ? `Activity/Score Error (see details)` : `${displayedError.substring(0, 100)}${displayedError.length > 100 ? "..." : ""}`)
+              }
+            </p>
             <TooltipProvider>
                 <Tooltip delayDuration={100}>
                     <TooltipTrigger asChild>
                         <Button variant="link" size="sm" className="text-xs h-auto p-0 mt-1 text-destructive">Details</Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom" className="max-w-xs bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
+                    <TooltipContent side="bottom" className="max-w-md bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
                         {activityError && `Activity Fetch Error:\n${activityError}\n\n`}
                         {scoreError && `Score Calculation Error:\n${scoreError}`}
+                        {!activityError && !scoreError && displayedError}
                     </TooltipContent>
                 </Tooltip>
             </TooltipProvider>
@@ -153,4 +169,3 @@ export function TeamMemberCard({ member, showDetailedScore }: TeamMemberCardProp
     </Card>
   );
 }
-
