@@ -41,7 +41,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
   if (mainRiskLevel === 'Low') { statusText = 'Stable'; StatusIcon = ShieldCheck; }
   else if (mainRiskLevel === 'Moderate') { statusText = 'At Risk'; StatusIcon = Activity; }
   else if (mainRiskLevel === 'High') { statusText = 'Overloaded'; StatusIcon = AlertTriangle; }
-  else { statusText = 'Stable'; StatusIcon = ShieldCheck; }
+  else { statusText = 'Stable'; StatusIcon = ShieldCheck; } // Default for unknown/loading
 
   const getStatusBadgeClasses = (status: string): string => {
     if (status === "Stable") return "border-green-500 text-green-600 dark:border-green-400 dark:text-green-500 bg-green-500/10";
@@ -60,27 +60,31 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
 
   const isRateLimitError = (errorMsg?: string | null): boolean => {
     if (!errorMsg) return false;
-    return errorMsg.includes("429") || errorMsg.toLowerCase().includes("quota exceeded") || errorMsg.toLowerCase().includes("rate limit");
+    const lowerError = errorMsg.toLowerCase();
+    return lowerError.includes("429") || lowerError.includes("quota exceeded") || lowerError.includes("rate limit");
   };
 
-  const isAiOverloadedError = (errorMsg?: string | null): boolean => { // Though we are not using AI for score now, this can be for other AI features
+  const isAiOverloadedError = (errorMsg?: string | null): boolean => { 
     if (!errorMsg) return false;
-    return errorMsg.includes("model is overloaded") || errorMsg.includes("503 Service Unavailable");
+    const lowerError = errorMsg.toLowerCase();
+    return lowerError.includes("model is overloaded") || lowerError.includes("503 service unavailable");
   };
 
-  let errorTitle = "Error Processing Data";
+  let errorTitle = "Data Processing Error";
   let errorDescription = scoreError || "An error occurred while fetching activities or calculating scores.";
   let displayErrorIcon = AlertTriangle;
 
   if (scoreError) {
     if (isRateLimitError(scoreError)) {
       errorTitle = "API Rate Limit Reached";
-      errorDescription = "Too many requests to Jira or Teams API. Please try again later or select a smaller date range.";
+      errorDescription = "Too many requests. Please try again later or select a smaller date range.";
       displayErrorIcon = Zap;
-    } else if (isAiOverloadedError(scoreError)) { // This is less likely now for scores but kept for robustness
-      errorTitle = "AI Model Busy";
+    } else if (isAiOverloadedError(scoreError)) {
+      errorTitle = "AI Model Busy"; // Though less likely now for scores, kept for robustness
       errorDescription = "An AI model is temporarily overloaded. Please try again.";
       displayErrorIcon = Zap;
+    } else {
+        errorDescription = scoreError; // Show the actual error message for other errors
     }
   }
 
@@ -100,8 +104,8 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
         {isLoadingScore && showDetailedScore ? (
           <div className="flex flex-col items-center justify-center flex-grow text-muted-foreground">
             <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-            <p className="text-sm text-center">Processing scores...</p>
-            <p className="text-xs text-center">(Averaging 2hr intervals)</p>
+            <p className="text-sm text-center">Processing score...</p>
+            <p className="text-xs text-center">(Fetching daily activities)</p>
           </div>
         ) : scoreError && showDetailedScore ? (
           <div className="flex flex-col items-center justify-center flex-grow text-destructive p-2 text-center">
@@ -135,11 +139,11 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
               <div className="flex items-center justify-between mb-1">
                 <Badge variant="outline" className={getStatusBadgeClasses(statusText)}>
                   <StatusIcon className="mr-1 h-3.5 w-3.5" />
-                  {statusText} (Daily Avg)
+                  {statusText} (Daily Score)
                 </Badge>
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">
-                    Score ({currentScoreDate ? format(currentScoreDate, 'MMM d') : 'Avg'})
+                    Score ({currentScoreDate ? format(currentScoreDate, 'MMM d') : 'Daily'})
                   </p>
                   <p className="text-2xl font-bold text-primary">{mainScore.toFixed(1)}</p>
                 </div>
@@ -154,7 +158,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
                   <TooltipTrigger asChild>
                     <div className="mt-1 text-xs text-muted-foreground flex items-center cursor-help hover:text-primary transition-colors">
                       <Info className="h-3.5 w-3.5 mr-1 shrink-0" />
-                      <span className="truncate">Daily Avg. Summary (hover)</span>
+                      <span className="truncate">Daily Score Summary (hover)</span>
                     </div>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" align="start" className="max-w-xs bg-popover text-popover-foreground p-2 rounded-md shadow-lg border text-xs whitespace-pre-wrap">
@@ -169,7 +173,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
                 <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
                   <div className="flex items-center gap-1">
                     <LineChart className="h-4 w-4" />
-                    <span>Historical Trend ({historicalScores.length}-day avg of daily avgs):</span>
+                    <span>Historical Trend ({historicalScores.length}-day avg):</span>
                   </div>
                   <span className="font-semibold text-foreground">{averageHistoricalScore?.toFixed(1) ?? "N/A"}</span>
                 </div>
@@ -177,7 +181,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
               </div>
             )}
             {historicalScores && historicalScores.length === 0 && !isLoadingScore && (
-              <p className="text-xs text-muted-foreground mt-2 text-center">No historical daily averages to display for selected range.</p>
+              <p className="text-xs text-muted-foreground mt-2 text-center">No historical daily scores to display for selected range.</p>
             )}
           </>
         ) : (
@@ -195,3 +199,5 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScor
     </Card>
   );
 }
+
+    
