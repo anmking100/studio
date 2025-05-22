@@ -9,18 +9,19 @@ const RISK_THRESHOLDS = {
 
 // Define weights for different factors
 const FACTOR_WEIGHTS = {
-  MEETING: 0.4, // Score per meeting
-  JIRA_TASK_UPDATE: 1.0, // Score per Jira task update - UPDATED from 0.4
-  SOURCE_SWITCH: 0.25, // Score per switch between different sources (e.g., Jira to Teams)
-  TYPE_SWITCH_SAME_SOURCE: 0.1, // Score per switch between different activity types within the same source
-  MULTI_PLATFORM_USAGE_BONUS: 0.5, // Bonus if > 2 sources are used
-  ACTIVITY_DENSITY_THRESHOLD: 5, // If more than 5 activities in an hour, add bonus
+  MEETING: 0.4, 
+  JIRA_TASK_UPDATE: 1.0, 
+  SOURCE_SWITCH: 0.25, 
+  TYPE_SWITCH_SAME_SOURCE: 0.1,
+  MULTI_PLATFORM_USAGE_BONUS: 0.5, 
+  ACTIVITY_DENSITY_THRESHOLD: 5, 
   ACTIVITY_DENSITY_BONUS: 0.3,
 };
 
 interface ContributingFactors {
   meetings: number;
   jiraTaskUpdates: number;
+  jiraCompletedTasksNotScored: number; // New counter
   sourceSwitches: number;
   typeSwitches: number;
   multiplePlatformsUsed: boolean;
@@ -37,7 +38,7 @@ export function calculateScoreAlgorithmically(
   if (!activities || activities.length === 0) {
     return {
       userId,
-      fragmentationScore: 0.0,
+      fragmentationScore: 0.0, // Changed from 0.5 to 0.0 for no activity
       summary: `No activities tracked for this period.`,
       riskLevel: 'Low',
       activitiesCount: 0,
@@ -48,6 +49,7 @@ export function calculateScoreAlgorithmically(
   const contributingFactors: ContributingFactors = {
     meetings: 0,
     jiraTaskUpdates: 0,
+    jiraCompletedTasksNotScored: 0,
     sourceSwitches: 0,
     typeSwitches: 0,
     multiplePlatformsUsed: false,
@@ -69,11 +71,17 @@ export function calculateScoreAlgorithmically(
     }
 
     // Jira Task Updates
-    // THIS IS WHERE JIRA DATA IS USED FOR SCORING
     if (activity.source === 'jira' && activity.type.startsWith('jira_issue')) {
-      console.log(`SCORE_CALC: Processing Jira activity for user ${userId}: ${activity.details}`);
-      score += FACTOR_WEIGHTS.JIRA_TASK_UPDATE;
-      contributingFactors.jiraTaskUpdates++;
+      console.log(`SCORE_CALC: Processing Jira activity for user ${userId}: ${activity.details}, Status Category: ${activity.jiraStatusCategoryKey}`);
+      contributingFactors.jiraTaskUpdates++; // Count all processed Jira activities
+
+      if (activity.jiraStatusCategoryKey === 'done') {
+        console.log(`SCORE_CALC: Jira task ${activity.details} is 'done', not adding to score.`);
+        contributingFactors.jiraCompletedTasksNotScored++;
+      } else {
+        score += FACTOR_WEIGHTS.JIRA_TASK_UPDATE;
+        console.log(`SCORE_CALC: Added ${FACTOR_WEIGHTS.JIRA_TASK_UPDATE} for active Jira task ${activity.details}. Current raw score: ${score}`);
+      }
     }
 
     // Context Switches
@@ -86,7 +94,6 @@ export function calculateScoreAlgorithmically(
         contributingFactors.typeSwitches++;
       }
     }
-    // Only update previousActivity if it's not a presence update, to avoid presence updates masking actual task switches
     if (activity.type !== 'teams_presence_update') {
         previousActivity = activity;
     }
@@ -98,21 +105,16 @@ export function calculateScoreAlgorithmically(
     contributingFactors.multiplePlatformsUsed = true;
   }
   
-  // Adjust activity density calculation for the window
-  // This simple check scales the threshold by the number of days in the window.
-  // A more sophisticated approach might look at activities per hour or specific time blocks.
   if (activities.length > FACTOR_WEIGHTS.ACTIVITY_DENSITY_THRESHOLD * activityWindowDays) { 
     score += FACTOR_WEIGHTS.ACTIVITY_DENSITY_BONUS;
-    contributingFactors.highActivityDensityPeriods = 1; // Simplified: flag if overall density is high
+    contributingFactors.highActivityDensityPeriods = 1; 
   }
 
-  // Nudge score up if there's activity but score is still very low (e.g. only presence updates)
-  // Ensure it's differentiated from a true "no activity" score of 0.0.
-  // Changed: if score is 0 but activities exist, bump to a minimal 0.1
-  if (activities.length > 0 && score > 0 && score < 0.1) { 
-    score = 0.1; 
-  } else if (activities.length > 0 && score === 0.0) { 
-    score = 0.1; 
+  // Nudge score up if there's activity but score is still very low, but ensure it's above 0.0 for actual activity
+  if (activities.length > 0 && score <= 0.0) { // If activities exist but score is 0 or less (unlikely unless all tasks were 'done' with 0 other factors)
+      score = 0.1; // Minimal score to indicate some processing happened
+  } else if (activities.length > 0 && score > 0 && score < 0.6) {
+    score = 0.6;
   }
 
 
@@ -131,8 +133,12 @@ export function calculateScoreAlgorithmically(
   if (finalScore === 0.0 && activities.length === 0) {
      summaryParts.push(`No activities tracked for this period.`);
   } else {
-    if (contributingFactors.jiraTaskUpdates > 0) {
-      summaryParts.push(`${contributingFactors.jiraTaskUpdates} Jira task activit${contributingFactors.jiraTaskUpdates === 1 ? 'y' : 'ies'}`);
+    const activeJiraTasks = contributingFactors.jiraTaskUpdates - contributingFactors.jiraCompletedTasksNotScored;
+    if (activeJiraTasks > 0) {
+      summaryParts.push(`${activeJiraTasks} active Jira task activit${activeJiraTasks === 1 ? 'y' : 'ies'}`);
+    }
+    if (contributingFactors.jiraCompletedTasksNotScored > 0) {
+      summaryParts.push(`${contributingFactors.jiraCompletedTasksNotScored} completed Jira task(s) processed (not scored)`);
     }
     if (contributingFactors.meetings > 0) {
       summaryParts.push(`${contributingFactors.meetings} meeting(s)`);
@@ -150,8 +156,7 @@ export function calculateScoreAlgorithmically(
       summaryParts.push(`periods of high activity density`);
     }
 
-    // Default summary part if others are empty but score is not minimal for zero activity
-    if (summaryParts.length === 0 && finalScore <= 1.0 && finalScore >= 0.0) { // Adjusted to include 0.0 if activities > 0
+    if (summaryParts.length === 0 && finalScore <= 1.0 && finalScore >= 0.0) { 
         summaryParts.push("low overall activity levels.");
     } else if (summaryParts.length === 0 && finalScore > 1.0) {
         summaryParts.push("general activity patterns.");
@@ -161,10 +166,10 @@ export function calculateScoreAlgorithmically(
   let summary = `Score of ${finalScore} (${riskLevel}). `;
   if (summaryParts.length > 0 && !(finalScore === 0.0 && activities.length === 0)) { 
      summary += "Key factors: " + summaryParts.join(', ') + ".";
-  } else if (activities.length > 0 && finalScore >= 0.0) { // For cases where activities are present but don't trigger specific summary parts (e.g. only presence updates)
+  } else if (activities.length > 0 && finalScore >= 0.0) { 
     summary += "Calculated based on general activity level."
   } else if (finalScore === 0.0 && activities.length === 0) {
-    // The initial summary part "No activities..." already covers this.
+    // Summary part "No activities..." already covers this.
   }
 
 
@@ -176,3 +181,4 @@ export function calculateScoreAlgorithmically(
     activitiesCount: activities.length,
   };
 }
+

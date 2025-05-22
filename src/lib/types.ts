@@ -23,6 +23,7 @@ export interface HistoricalScore {
   riskLevel: 'Low' | 'Moderate' | 'High';
   summary: string;
   activitiesCount: number;
+  activityError?: string; // Added to hold errors for specific historical day activities
 }
 
 
@@ -40,8 +41,9 @@ export interface TeamMemberFocus {
 
   isLoadingScore: boolean;
   scoreError?: string | null;
-  activityError?: string | null;
+  activityError?: string | null; // For current day activity fetching errors
   isLoadingActivities?: boolean;
+  // onRetry?: () => Promise<void>; // This was a placeholder, actual retry logic is in page
 }
 
 export interface Task {
@@ -63,19 +65,19 @@ export interface MicrosoftGraphUser {
 // Definition for a raw Jira issue object
 export interface JiraIssue {
   key: string;
-  id: string; // Usually the same as key for older issues, but good to have
-  self: string; // API link to the issue
+  id: string; 
+  self: string; 
   fields: {
     summary: string;
     status: {
       name: string;
       statusCategory?: {
-        key?: string;
+        key?: string; // e.g., "new", "indeterminate", "done"
         name?: string;
       };
     };
-    updated: string; // ISO 8601 datetime string
-    created: string; // ISO 8601 datetime string
+    updated: string; 
+    created: string; 
     issuetype: {
       name: string;
       iconUrl?: string;
@@ -99,13 +101,7 @@ export interface JiraIssue {
       key?: string;
       name?: string;
     };
-    // Add any other fields you might want to inspect from the raw response
-    // For example:
-    // description?: any; // Can be complex Atlassian Document Format
-    // comments?: { comments: any[]; maxResults: number; total: number; startAt: number; };
   };
-  // You can add more top-level fields if needed, e.g., changelog for history
-  // changelog?: { histories: any[] };
 }
 
 
@@ -122,6 +118,7 @@ export interface GenericActivityItem {
   details?: string;
   source: 'teams' | 'jira' | 'm365' | 'github' | 'other';
   durationMinutes?: number;
+  jiraStatusCategoryKey?: string; // Added to track Jira issue status category
 }
 
 export interface CalculateFragmentationScoreInputType {
@@ -136,3 +133,4 @@ export interface FragmentationDataPoint {
   summary?: string;
   riskLevel?: 'Low' | 'Moderate' | 'High';
 }
+
