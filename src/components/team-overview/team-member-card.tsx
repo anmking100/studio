@@ -1,7 +1,7 @@
 
 "use client";
 
-import type { TeamMemberFocus, HistoricalScore } from "@/lib/types";
+import type { TeamMemberFocus, HistoricalScore, CalculateFragmentationScoreOutput } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -10,15 +10,16 @@ import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { format, parseISO } from 'date-fns';
-import { MemberHistoricalChart } from "./member-historical-chart"; // New chart component
+import { MemberHistoricalChart } from "./member-historical-chart"; 
 
 interface TeamMemberCardProps {
   member: TeamMemberFocus;
   showDetailedScore: boolean; 
   onRetry?: () => Promise<void>;
+  currentScoreDate?: Date; // New prop for the date of the main score
 }
 
-export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMemberCardProps) {
+export function TeamMemberCard({ member, showDetailedScore, onRetry, currentScoreDate }: TeamMemberCardProps) {
   const { 
     name, 
     avatarUrl, 
@@ -30,7 +31,7 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
   } = member;
 
   const mainScore = showDetailedScore && currentDayScoreData ? currentDayScoreData.fragmentationScore : 0;
-  const mainRiskLevel = showDetailedScore && currentDayScoreData ? currentDayScoreData.riskLevel : 'Stable';
+  const mainRiskLevel = showDetailedScore && currentDayScoreData ? currentDayScoreData.riskLevel : 'Low'; // Default to Low if not detailed
   const mainSummary = showDetailedScore && currentDayScoreData ? currentDayScoreData.summary : undefined;
 
   let StatusIcon = ShieldCheck;
@@ -139,7 +140,9 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
                   {statusText} ({currentDayScoreData.summary.includes("Note: Some activity data might be missing") ? "Partial Data" : "End Date"})
                 </Badge>
                 <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Score ({format(parseISO(currentDayScoreData.userId.split('_').pop() || new Date().toISOString()), 'MMM d')})</p> {/* Assuming date is part of userId hack in page */}
+                    <p className="text-xs text-muted-foreground">
+                      Score ({currentScoreDate ? format(currentScoreDate, 'MMM d') : 'Current'})
+                    </p>
                     <p className="text-2xl font-bold text-primary">{mainScore.toFixed(1)}</p>
                 </div>
               </div>
@@ -195,3 +198,4 @@ export function TeamMemberCard({ member, showDetailedScore, onRetry }: TeamMembe
     </Card>
   );
 }
+
