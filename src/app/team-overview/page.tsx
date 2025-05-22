@@ -6,7 +6,7 @@ import { TeamMemberCard } from "@/components/team-overview/team-member-card";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Users, BarChart3, ShieldAlert, Loader2, AlertTriangle, ShieldCheck, CalendarDays } from "lucide-react";
+import { Users, BarChart3, ShieldAlert, Loader2, AlertTriangle, ShieldCheck, CalendarDays, RefreshCw } from "lucide-react";
 import Image from "next/image";
 import { calculateScoreAlgorithmically } from "@/lib/score-calculator";
 import type { TeamMemberFocus, GenericActivityItem, MicrosoftGraphUser, HistoricalScore, CalculateFragmentationScoreInputType, CalculateFragmentationScoreOutput } from "@/lib/types";
@@ -28,6 +28,7 @@ export default function TeamOverviewPage() {
   const [isLoadingUsers, setIsLoadingUsers] = useState(isHR);
   const [userFetchError, setUserFetchError] = useState<string | null>(null);
   const [isProcessingMembers, setIsProcessingMembers] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
     const today = new Date();
@@ -100,7 +101,7 @@ export default function TeamOverviewPage() {
       console.error(scoreErrorMessage, scoreErr);
       return { error: activityFetchError ? `${activityFetchError}; ${scoreErrorMessage}` : scoreErrorMessage , intervalDetails: {start: intervalStartISO, end: intervalEndISO}};
     }
-  }, []); // Empty dependency array for useCallback if it doesn't depend on component state/props directly or uses stable refs/dispatchers
+  }, []); 
 
 
   // Orchestrates calculating the average score for a full day (current or historical)
@@ -108,10 +109,10 @@ export default function TeamOverviewPage() {
     memberId: string,
     memberEmail: string | undefined,
     dayToProcess: Date,
-    isCurrentSelectedDay: boolean, // True if dayToProcess is the endDate of the user's selected range
-    currentSystemTime: Date // The actual current time, used if isCurrentSelectedDay and dayToProcess is today
+    isCurrentSelectedDay: boolean, 
+    currentSystemTimeWhenProcessingStarted: Date 
   ): Promise<CalculateFragmentationScoreOutput | { error: string }> => {
-    console.log(`TEAM OVERVIEW (DailyAvg): Calculating average score for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}. Is current selected day: ${isCurrentSelectedDay}`);
+    console.log(`TEAM OVERVIEW (DailyAvg): Calculating average score for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}. Is current selected day: ${isCurrentSelectedDay}. Processing start time: ${format(currentSystemTimeWhenProcessingStarted, 'HH:mm:ss')}`);
     const intervalScores: number[] = [];
     let totalActivitiesForDay = 0;
     let errorsForDay: string[] = [];
@@ -123,22 +124,27 @@ export default function TeamOverviewPage() {
       let intervalStart = addHours(dayStart, hourOffset);
       let intervalEnd = addHours(intervalStart, INTERVAL_HOURS);
 
-      if (isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTime))) {
-        // If processing today (as the selected end date), and this interval starts after current time, stop.
-        if (isBefore(currentSystemTime, intervalStart)) {
-          console.log(`TEAM OVERVIEW (DailyAvg): Interval ${format(intervalStart, 'HH:mm')} starts after current time ${format(currentSystemTime, 'HH:mm')}. Stopping for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
+      if (isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTimeWhenProcessingStarted))) {
+        // If processing today (as the selected end date), and this interval starts after currentSystemTimeWhenProcessingStarted, stop.
+        if (isBefore(currentSystemTimeWhenProcessingStarted, intervalStart)) {
+          console.log(`TEAM OVERVIEW (DailyAvg): Interval ${format(intervalStart, 'HH:mm')} starts after current processing time ${format(currentSystemTimeWhenProcessingStarted, 'HH:mm')}. Stopping for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
           break;
         }
-        // If interval extends beyond current time, cap it at current time.
-        if (isBefore(currentSystemTime, intervalEnd)) {
-          intervalEnd = currentSystemTime;
-          console.log(`TEAM OVERVIEW (DailyAvg): Capping interval end to current time ${format(intervalEnd, 'HH:mm')} for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
+        // If interval extends beyond currentSystemTimeWhenProcessingStarted, cap it at currentSystemTimeWhenProcessingStarted.
+        if (isBefore(currentSystemTimeWhenProcessingStarted, intervalEnd)) {
+          intervalEnd = currentSystemTimeWhenProcessingStarted;
+          console.log(`TEAM OVERVIEW (DailyAvg): Capping interval end to current processing time ${format(intervalEnd, 'HH:mm')} for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
         }
+      } else if (isCurrentSelectedDay && isBefore(dayToProcess, startOfDay(currentSystemTimeWhenProcessingStarted))) {
+         // If processing a past day that is the selected end date, process the full day
+         if (isBefore(endOfDay(dayToProcess), intervalEnd)){
+            intervalEnd = endOfDay(dayToProcess);
+         }
       }
       
-      // Ensure intervalEnd does not exceed the very end of dayToProcess if it's not today.
-      // Or if it is today, ensure it doesn't exceed currentSystemTime when isCurrentSelectedDay is true.
-      if (isBefore(endOfDay(dayToProcess), intervalEnd) && !(isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTime)))) {
+      // Ensure intervalEnd does not exceed the very end of dayToProcess if it's not today and not the current selected day being capped.
+      // This was part of the original logic to ensure we don't go past the end of day for historical full days.
+      if (!isCurrentSelectedDay && isBefore(endOfDay(dayToProcess), intervalEnd)) {
           intervalEnd = endOfDay(dayToProcess);
       }
 
@@ -146,7 +152,7 @@ export default function TeamOverviewPage() {
       // If interval start is same or after interval end (can happen if current time is at very start of an interval for today)
       if (!isBefore(intervalStart, intervalEnd)) {
           console.log(`TEAM OVERVIEW (DailyAvg): Interval start ${format(intervalStart, 'HH:mm')} is not before end ${format(intervalEnd, 'HH:mm')}. Skipping for ${memberId} on ${format(dayToProcess, 'yyyy-MM-dd')}.`);
-          if (isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTime))) break; // Stop if it's today and we've caught up to current time.
+          if (isCurrentSelectedDay && isEqual(startOfDay(dayToProcess), startOfDay(currentSystemTimeWhenProcessingStarted)) && !isBefore(intervalStart, currentSystemTimeWhenProcessingStarted)) break; 
           continue;
       }
 
@@ -158,7 +164,7 @@ export default function TeamOverviewPage() {
       } else {
         intervalScores.push(intervalResult.fragmentationScore);
         totalActivitiesForDay += intervalResult.activitiesCount;
-        lastIntervalSummary = intervalResult.summary; // Keep the last successful summary
+        lastIntervalSummary = intervalResult.summary; 
       }
     }
 
@@ -167,12 +173,10 @@ export default function TeamOverviewPage() {
     }
 
     if (intervalScores.length === 0) {
-      // If no intervals were successfully processed (e.g., all had errors, or it's too early in the day)
-      // Return a default low score or an error state
       const baseSummary = `No scorable activity intervals found for ${format(dayToProcess, 'yyyy-MM-dd')}.`;
       return {
         userId: memberId,
-        fragmentationScore: 0.5, // Default for no data
+        fragmentationScore: 0.5, 
         summary: errorsForDay.length > 0 ? `${baseSummary} Errors: ${errorsForDay.join('; ')}` : baseSummary,
         riskLevel: 'Low',
         activitiesCount: 0,
@@ -188,7 +192,7 @@ export default function TeamOverviewPage() {
 
     let dailySummary = `Daily average score of ${averageScore} (${riskLevel}) for ${format(dayToProcess, 'yyyy-MM-dd')} based on ${intervalScores.length} ${INTERVAL_HOURS}-hour interval(s). Total activities: ${totalActivitiesForDay}.`;
     if (errorsForDay.length > 0) {
-      dailySummary += ` Some intervals had errors: ${errorsForDay.slice(0,1).join('; ')}...`; // Show first error
+      dailySummary += ` Some intervals had errors: ${errorsForDay.slice(0,1).join('; ')}...`; 
     }
 
 
@@ -200,22 +204,22 @@ export default function TeamOverviewPage() {
       activitiesCount: totalActivitiesForDay,
     };
 
-  }, [fetchAndScoreIntervalData]); // fetchAndScoreIntervalData is now stable due to its own useCallback
+  }, [fetchAndScoreIntervalData]); 
 
 
   const processSingleMember = useCallback(async (
     memberInput: Omit<TeamMemberFocus, 'isLoadingScore' | 'scoreError' | 'currentDayScoreData' | 'historicalScores' | 'averageHistoricalScore' | 'activityError' | 'isLoadingActivities'>,
-    effectiveStartDate: Date, // This is dateRange.from
-    effectiveEndDate: Date,   // This is dateRange.to
-    currentSystemTime: Date   // The actual current time when processing starts
+    effectiveStartDate: Date, 
+    effectiveEndDate: Date,  
+    currentSystemTimeWhenProcessingStarted: Date 
   ): Promise<TeamMemberFocus> => {
-    console.log(`TEAM OVERVIEW (Member): Starting data processing for member: ${memberInput.name} (ID: ${memberInput.id}) for range ${format(effectiveStartDate, 'yyyy-MM-dd')} to ${format(effectiveEndDate, 'yyyy-MM-dd HH:mm')}`);
+    console.log(`TEAM OVERVIEW (Member): Starting data processing for member: ${memberInput.name} (ID: ${memberInput.id}) for range ${format(effectiveStartDate, 'yyyy-MM-dd')} to ${format(effectiveEndDate, 'yyyy-MM-dd HH:mm:ss')}`);
     let overallMemberError: string | null = null;
     const historicalScoresData: HistoricalScore[] = [];
     let currentDayCalculatedScoreData: CalculateFragmentationScoreOutput | null = null;
 
     // Calculate score for the selected effectiveEndDate
-    const mainDayResult = await calculateAverageDailyScore(memberInput.id, memberInput.email, effectiveEndDate, true, currentSystemTime);
+    const mainDayResult = await calculateAverageDailyScore(memberInput.id, memberInput.email, effectiveEndDate, true, currentSystemTimeWhenProcessingStarted);
     if ('error' in mainDayResult) {
       overallMemberError = (overallMemberError ? overallMemberError + "\n" : "") + `Score for ${format(effectiveEndDate, 'yyyy-MM-dd')}: ${mainDayResult.error}`;
     } else {
@@ -224,6 +228,7 @@ export default function TeamOverviewPage() {
 
     // Calculate historical scores
     for (let i = 0; i < NUMBER_OF_HISTORICAL_DAYS_FOR_TREND; i++) {
+      // Historical date is the day *before* the previous one in the loop, or effectiveEndDate for the first iteration
       const historicalDateToProcess = startOfDay(subDays(effectiveEndDate, i + 1));
 
       if (isBefore(historicalDateToProcess, startOfDay(effectiveStartDate))) {
@@ -232,7 +237,9 @@ export default function TeamOverviewPage() {
       }
 
       console.log(`TEAM OVERVIEW (Member): Calculating historical daily average for ${memberInput.name} on ${format(historicalDateToProcess, 'yyyy-MM-dd')}`);
-      const historicalDayAvgResult = await calculateAverageDailyScore(memberInput.id, memberInput.email, historicalDateToProcess, false, currentSystemTime);
+      // For historical days, we process the full day, so currentSystemTimeWhenProcessingStarted is less relevant for capping,
+      // but pass it along as the function expects it. The `isCurrentSelectedDay` is false.
+      const historicalDayAvgResult = await calculateAverageDailyScore(memberInput.id, memberInput.email, historicalDateToProcess, false, currentSystemTimeWhenProcessingStarted);
 
       if ('error' in historicalDayAvgResult) {
         const errorMsg = `Historical for ${format(historicalDateToProcess, 'yyyy-MM-dd')}: ${historicalDayAvgResult.error}`;
@@ -246,7 +253,7 @@ export default function TeamOverviewPage() {
           riskLevel: historicalDayAvgResult.riskLevel,
           summary: historicalDayAvgResult.summary,
           activitiesCount: historicalDayAvgResult.activitiesCount,
-          intervalScoresCount: Math.ceil(24 / INTERVAL_HOURS) // Assuming full day processed for historical
+          intervalScoresCount: Math.ceil(24 / INTERVAL_HOURS) 
         });
       }
     }
@@ -270,7 +277,7 @@ export default function TeamOverviewPage() {
       scoreError: overallMemberError,
       activityError: overallMemberError,
     };
-  }, [calculateAverageDailyScore]); // calculateAverageDailyScore is now stable
+  }, [calculateAverageDailyScore]); 
 
 
   const handleRetryMemberProcessing = useCallback(async (memberId: string) => {
@@ -292,14 +299,15 @@ export default function TeamOverviewPage() {
         ...baseMemberInfo
       } = memberToRetry;
       
-      let effectiveRangeEnd = dateRange.to;
-      if (!isEqual(startOfDay(dateRange.to), startOfDay(new Date()))) {
-          effectiveRangeEnd = endOfDay(dateRange.to);
+      const currentSystemTimeForRetry = new Date();
+      let effectiveRangeEndForRetry = dateRange.to;
+      if (isEqual(startOfDay(dateRange.to), startOfDay(currentSystemTimeForRetry))) {
+          effectiveRangeEndForRetry = currentSystemTimeForRetry; 
       } else {
-          effectiveRangeEnd = new Date(); 
+          effectiveRangeEndForRetry = endOfDay(dateRange.to);
       }
 
-      const updatedMember = await processSingleMember(baseMemberInfo, startOfDay(dateRange.from), effectiveRangeEnd, new Date());
+      const updatedMember = await processSingleMember(baseMemberInfo, startOfDay(dateRange.from), effectiveRangeEndForRetry, currentSystemTimeForRetry);
 
       setTeamData(prevTeamData =>
         prevTeamData.map(m =>
@@ -319,16 +327,16 @@ export default function TeamOverviewPage() {
         setTeamData([]);
         setIsProcessingMembers(true);
         
-        const currentSystemTime = new Date(); 
+        const currentSystemTimeForFetch = new Date(); 
         const effectiveRangeFrom = startOfDay(dateRange.from);
-        let effectiveRangeTo = dateRange.to; 
+        let effectiveRangeToForFetch: Date; 
 
-        if (!isEqual(startOfDay(effectiveRangeTo), startOfDay(currentSystemTime))) {
-            effectiveRangeTo = endOfDay(effectiveRangeTo);
+        if (isEqual(startOfDay(dateRange.to), startOfDay(currentSystemTimeForFetch))) {
+            effectiveRangeToForFetch = currentSystemTimeForFetch;
         } else {
-            effectiveRangeTo = currentSystemTime;
+            effectiveRangeToForFetch = endOfDay(dateRange.to);
         }
-        console.log(`TEAM OVERVIEW: Effective processing range for ALL members: ${format(effectiveRangeFrom, 'yyyy-MM-dd')} to ${format(effectiveRangeTo, 'yyyy-MM-dd HH:mm')}`);
+        console.log(`TEAM OVERVIEW: Effective processing range for ALL members (triggered by date/refreshKey): ${format(effectiveRangeFrom, 'yyyy-MM-dd')} to ${format(effectiveRangeToForFetch, 'yyyy-MM-dd HH:mm:ss')}`);
 
         let msUsers: MicrosoftGraphUser[] = [];
         try {
@@ -373,17 +381,19 @@ export default function TeamOverviewPage() {
         setTeamData(initialTeamDataSetup);
         setIsLoadingUsers(false);
 
+        // Process members one by one to avoid overwhelming APIs (though it's still a lot)
         for (const member of initialTeamDataSetup) {
-          const { currentDayScoreData: _a, historicalScores: _b, averageHistoricalScore: _c, isLoadingScore: _d, isLoadingActivities: _e, scoreError: _f, activityError: _g, ...baseInfo } = member;
-          const updatedMember = await processSingleMember(baseInfo, effectiveRangeFrom, effectiveRangeTo, currentSystemTime);
-          setTeamData(prev => prev.map(m => m.id === updatedMember.id ? updatedMember : m));
+            // Destructure to pass only base info to processSingleMember
+            const { currentDayScoreData: _a, historicalScores: _b, averageHistoricalScore: _c, isLoadingScore: _d, isLoadingActivities: _e, scoreError: _f, activityError: _g, ...baseInfo } = member;
+            const updatedMember = await processSingleMember(baseInfo, effectiveRangeFrom, effectiveRangeToForFetch, currentSystemTimeForFetch);
+            setTeamData(prev => prev.map(m => m.id === updatedMember.id ? updatedMember : m));
         }
         setIsProcessingMembers(false);
         console.log("TEAM OVERVIEW: All members processed (new interval logic).");
       };
       fetchGraphUsersAndProcessAll();
     }
-  }, [isHR, processSingleMember, dateRange]);
+  }, [isHR, processSingleMember, dateRange, refreshKey]); // Added refreshKey
 
   const teamStats = teamData.reduce((acc, member) => {
     if (member.isLoadingScore || !member.currentDayScoreData?.riskLevel || member.scoreError) return acc;
@@ -398,7 +408,7 @@ export default function TeamOverviewPage() {
     if (!day) return;
     const newFrom = startOfDay(day);
     setDateRange(prev => {
-        const currentTo = prev?.to || new Date();
+        const currentTo = prev?.to || new Date(); // Ensure currentTo is a Date
         const newTo = isBefore(currentTo, newFrom) ? endOfDay(newFrom) : currentTo;
         return { from: newFrom, to: newTo };
     });
@@ -406,9 +416,10 @@ export default function TeamOverviewPage() {
 
   const handleEndDateSelect = (day: Date | undefined) => {
     if (!day) return;
+    // If selected end date is today, keep time component, otherwise end of day
     const newTo = isEqual(startOfDay(day), startOfDay(new Date())) ? new Date() : endOfDay(day);
     setDateRange(prev => {
-        const currentFrom = prev?.from || startOfDay(subDays(newTo, 6));
+        const currentFrom = prev?.from || startOfDay(subDays(newTo, 6)); // Ensure currentFrom is a Date
         const newFrom = isAfter(currentFrom, newTo) ? startOfDay(newTo) : currentFrom;
         return { from: newFrom, to: newTo };
     });
@@ -445,15 +456,18 @@ export default function TeamOverviewPage() {
       {isHR && (
         <Card className="shadow-md">
           <CardHeader>
-            <CardTitle className="text-lg">Select Date Range</CardTitle>
-            <CardDescription>View team focus data. Scores are daily averages of 2-hour intervals.</CardDescription>
+            <CardTitle className="text-lg">Select Date Range & Refresh</CardTitle>
+            <CardDescription>
+              View team focus data. Scores are daily averages of 2-hour intervals. 
+              Historical trend shows prior daily averages. Refreshing recalculates the end date's score up to the current time if the end date is today.
+            </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col sm:flex-row gap-4 items-center">
+          <CardContent className="flex flex-col sm:flex-row gap-4 items-center flex-wrap">
             <Popover>
               <PopoverTrigger asChild>
                 <Button
                   variant={"outline"}
-                  className={cn("w-full sm:w-[280px] justify-start text-left font-normal", !dateRange?.from && "text-muted-foreground")}
+                  className={cn("w-full sm:w-auto min-w-[240px] justify-start text-left font-normal", !dateRange?.from && "text-muted-foreground")}
                 >
                   <CalendarDays className="mr-2 h-4 w-4" />
                   {dateRange?.from ? format(dateRange.from, "LLL dd, y") : <span>Pick a start date</span>}
@@ -472,10 +486,10 @@ export default function TeamOverviewPage() {
               <PopoverTrigger asChild>
                 <Button
                   variant={"outline"}
-                  className={cn("w-full sm:w-[280px] justify-start text-left font-normal", !dateRange?.to && "text-muted-foreground")}
+                  className={cn("w-full sm:w-auto min-w-[240px] justify-start text-left font-normal", !dateRange?.to && "text-muted-foreground")}
                 >
                   <CalendarDays className="mr-2 h-4 w-4" />
-                  {dateRange?.to ? format(dateRange.to, "LLL dd, y") : <span>Pick an end date</span>}
+                  {dateRange?.to ? format(dateRange.to, "LLL dd, y HH:mm") : <span>Pick an end date</span>}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
@@ -486,10 +500,18 @@ export default function TeamOverviewPage() {
                 />
               </PopoverContent>
             </Popover>
+             <Button
+              onClick={() => setRefreshKey(prev => prev + 1)}
+              disabled={isLoadingUsers || isProcessingMembers}
+              className="w-full sm:w-auto"
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Refresh Data
+            </Button>
           </CardContent>
           <CardHeader>
             <CardDescription className="text-xs text-muted-foreground">
-              Selected End Date score is an average of 2hr intervals up to current time (if today) or full day (if past). Historical trend shows daily averages for up to {NUMBER_OF_HISTORICAL_DAYS_FOR_TREND} prior days within the selected Start Date.
+              Selected End Date score is an average of 2hr intervals up to specified time (or current time if today & refreshed) or full day (if past). Historical trend shows daily averages for up to {NUMBER_OF_HISTORICAL_DAYS_FOR_TREND} prior days within the selected Start Date.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -582,7 +604,7 @@ export default function TeamOverviewPage() {
           </div>
           <CardDescription>
             {isHR
-              ? `Focus status for each member based on the selected End Date (${dateRange?.to ? format(dateRange.to, "LLL dd, y") : 'N/A'}). Scores are daily averages of 2hr intervals. Historical trend shows prior daily averages within range.`
+              ? `Focus status for each member based on the selected End Date (${dateRange?.to ? format(dateRange.to, "LLL dd, y HH:mm") : 'N/A'}). Scores are daily averages of 2hr intervals. Historical trend shows prior daily averages within range.`
               : "Overview of team member stability (details restricted)."}
           </CardDescription>
         </CardHeader>
@@ -617,5 +639,3 @@ export default function TeamOverviewPage() {
     </div>
   );
 }
-
-    
