@@ -73,26 +73,31 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const data: JiraApiUser[] = await response.json(); 
+    const rawDataFromApi: JiraApiUser[] = await response.json(); 
     
-    if (data && data.length > 0) {
-        console.log(`JIRA USERS API: SUCCESS - Found ${data.length} raw Jira accounts from API.`);
+    if (rawDataFromApi && rawDataFromApi.length > 0) {
+        console.log(`JIRA USERS API: SUCCESS - Found ${rawDataFromApi.length} raw Jira accounts from API.`);
+        // Log the first few raw accounts to help debugging
+        console.log("JIRA USERS API: Sample of RAW user data received from Jira (first 3 or less):");
+        rawDataFromApi.slice(0, 3).forEach((rawUser, index) => {
+            console.log(`Raw User ${index + 1}: accountId=${rawUser.accountId}, displayName=${rawUser.displayName}, emailAddress=${rawUser.emailAddress || 'N/A'}, active=${rawUser.active}`);
+        });
         
         // Filter for active users AND users with an email address
-        const actualUsers = data.filter(user => user.active && user.emailAddress && user.emailAddress.trim() !== '');
+        const actualUsers = rawDataFromApi.filter(user => user.active && user.emailAddress && user.emailAddress.trim() !== '');
         console.log(`JIRA USERS API: Filtered to ${actualUsers.length} active Jira users with email addresses.`);
 
         if (actualUsers.length > 0) {
-            console.log(`JIRA USERS API: Sample filtered active user: AccountID - ${actualUsers[0].accountId}, DisplayName - "${actualUsers[0].displayName}", Email - ${actualUsers[0].emailAddress}`);
+            console.log(`JIRA USERS API: Sample filtered active user (after our app's filter): AccountID - ${actualUsers[0].accountId}, DisplayName - "${actualUsers[0].displayName}", Email - ${actualUsers[0].emailAddress}`);
         }
         
         const users: JiraUser[] = actualUsers.map(mapJiraApiUserToJiraUser);
-        console.log(`JIRA USERS API: Mapped ${users.length} filtered users to JiraUser format.`);
+        console.log(`JIRA USERS API: Mapped ${users.length} filtered users to JiraUser format for UI display.`);
         console.log("JIRA USERS API HANDLER: --- END (Success) ---");
         return NextResponse.json(users);
     } else {
-        console.log(`JIRA USERS API: INFO - Successfully connected to Jira, but NO Jira accounts found for the query or no active users with email addresses.`);
-        console.log("JIRA USERS API HANDLER: --- END (Success - No Users) ---");
+        console.log(`JIRA USERS API: INFO - Successfully connected to Jira, but NO Jira accounts found by the API query or initial response was empty.`);
+        console.log("JIRA USERS API HANDLER: --- END (Success - No Users from API) ---");
         return NextResponse.json([]);
     }
 
