@@ -19,15 +19,13 @@ export interface HistoricalScore {
 export interface TeamMemberFocus {
   id: string; 
   name: string;
-  email: string; 
+  email?: string; // Made optional as MSGraphUser might not always have it as UPN
   role: 'developer' | 'hr'; 
   avatarUrl?: string;
 
-  // Score and details for the main target date of the selected range
   currentDayScoreData?: CalculateFragmentationScoreOutput | null;
 
-  // Historical scores leading up to the target date, within the selected range
-  historicalScores: HistoricalScore[]; // Now always initialized
+  historicalScores: HistoricalScore[];
   averageHistoricalScore?: number | null;
   
   isLoadingScore: boolean; 
@@ -56,7 +54,8 @@ export interface GenericActivityItem {
   type: string; 
   timestamp: string; 
   details?: string; 
-  source: 'teams' | 'jira' | 'm365' | 'github' | 'other'; 
+  source: 'teams' | 'jira' | 'm365' | 'github' | 'other';
+  durationMinutes?: number; // Added to store meeting duration
 }
 
 export interface CalculateFragmentationScoreInputType {
@@ -70,6 +69,7 @@ export interface CalculateFragmentationScoreOutput {
   fragmentationScore: number; 
   summary: string; 
   riskLevel: 'Low' | 'Moderate' | 'High';
+  activitiesCount?: number; // Optional: count of activities processed
 }
 
 // For dashboard page - personal score display (less complex than team member)
@@ -79,4 +79,3 @@ export interface FragmentationDataPoint {
   summary?: string; 
   riskLevel?: 'Low' | 'Moderate' | 'High'; 
 }
-
