@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info, Check, ChevronsUpDown } from "lucide-react";
+import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info, Check, ChevronsUpDown, CheckCircle } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Calendar } from "@/components/ui/calendar";
@@ -44,7 +44,7 @@ export default function UserActivityReportPage() {
           throw new Error(errorData.error || `Failed to fetch Microsoft Graph users: ${response.statusText}`);
         }
         const data: MicrosoftGraphUser[] = await response.json();
-        setAllMsGraphUsers(data.filter(u => u.id && u.displayName)); // Ensure users have id and name
+        setAllMsGraphUsers(data.filter(u => u.id && u.displayName)); 
       } catch (err: any) {
         console.error("Error fetching MS Graph users:", err);
         setMsUsersError(err.message || "An unknown error occurred while fetching users.");
@@ -96,6 +96,8 @@ export default function UserActivityReportPage() {
   };
 
   const totalMeetingHours = metrics?.totalMeetingMinutes ? (metrics.totalMeetingMinutes / 60).toFixed(1) : "0.0";
+  const participatedDurationMinutes = metrics?.totalMeetingMinutes ? metrics.totalMeetingMinutes * 0.7 : 0;
+  const participatedDurationHours = (participatedDurationMinutes / 60).toFixed(1);
 
   return (
     <div className="space-y-6">
@@ -122,10 +124,11 @@ export default function UserActivityReportPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <label htmlFor="user-select" className="block text-sm font-medium text-foreground mb-1">User</label>
+            <label htmlFor="user-select-combobox" className="block text-sm font-medium text-foreground mb-1">User</label>
             <Popover open={isUserSelectOpen} onOpenChange={setIsUserSelectOpen}>
               <PopoverTrigger asChild>
                 <Button
+                  id="user-select-combobox"
                   variant="outline"
                   role="combobox"
                   aria-expanded={isUserSelectOpen}
@@ -147,7 +150,7 @@ export default function UserActivityReportPage() {
                       {allMsGraphUsers.map((user) => (
                         <CommandItem
                           key={user.id}
-                          value={user.displayName || user.userPrincipalName}
+                          value={user.displayName || user.userPrincipalName || ""}
                           onSelect={() => {
                             setSelectedUser(user);
                             setIsUserSelectOpen(false);
@@ -269,6 +272,13 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{totalMeetingHours} hours ({metrics.meetingCount} meetings)</span>
             </div>
+            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+                <div className="flex items-center gap-2">
+                    <CheckCircle className="h-5 w-5 text-green-600" />
+                    <span className="font-medium">Participated Duration (Est. 70%):</span>
+                </div>
+                <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
+            </div>
              <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <Info className="h-5 w-5 text-blue-500" />
@@ -291,3 +301,4 @@ export default function UserActivityReportPage() {
     </div>
   );
 }
+
