@@ -68,8 +68,6 @@ export default function UserActivityReportPage() {
       setMetricsError("Selected user is missing an ID. Cannot generate report.");
       return;
     }
-    // userPrincipalName is used as userEmail for Jira.
-    // The API route for user-activity-metrics will handle cases where userEmail might be missing if it only affects Jira part.
     if (!dateRange?.from || !dateRange?.to) {
       setMetricsError("Please select a valid date range.");
       return;
@@ -89,7 +87,7 @@ export default function UserActivityReportPage() {
       if (selectedUser.userPrincipalName) {
         params.append('userEmail', selectedUser.userPrincipalName);
       } else {
-        console.warn(`User ${selectedUser.displayName} (ID: ${selectedUser.id}) is missing userPrincipalName. Jira tasks might not be fetched.`);
+        console.warn(`User ${selectedUser.displayName} (ID: ${selectedUser.id}) is missing userPrincipalName. Jira tasks might not be fetched or might be inaccurate.`);
       }
 
       const response = await fetch(`/api/user-activity-metrics?${params.toString()}`);
@@ -124,7 +122,7 @@ export default function UserActivityReportPage() {
           acc.ongoing++;
         } else if (statusKey === 'new') {
           acc.pending++;
-        } else if (statusKey !== '') { 
+        } else if (statusKey !== '') { // Count other non-empty status keys as ongoing if not explicitly done/new
            acc.ongoing++;
         }
         return acc;
@@ -311,11 +309,11 @@ export default function UserActivityReportPage() {
             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <CheckCircle className="h-5 w-5 text-green-600" />
-                    <span className="font-medium">Participated Duration (Est. 70%):</span>
+                    <span className="font-medium">Participated Duration:</span>
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <MessageSquareText className="h-5 w-5 text-orange-500" />
                     <span className="font-medium">Average Message Response Time:</span>
@@ -323,7 +321,7 @@ export default function UserActivityReportPage() {
                 <span className="font-semibold text-sm text-muted-foreground">(Feature Coming Soon)</span>
             </div>
             
-            {metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0 && (
+            {metrics.jiraTaskDetails && (
               <Accordion type="single" collapsible className="w-full">
                 <AccordionItem value="jira-task-details">
                    <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
@@ -338,22 +336,26 @@ export default function UserActivityReportPage() {
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="pt-1 pb-3 px-3 border rounded-b-md border-t-0">
-                    <ScrollArea className="h-[200px] mt-2">
-                      <ul className="space-y-2">
-                        {metrics.jiraTaskDetails.map((task) => (
-                          <li key={task.key} className="text-xs border-b pb-1">
-                            <p><strong>Key:</strong> {task.key} ({task.type})</p>
-                            <p><strong>Summary:</strong> {task.summary}</p>
-                            <p><strong>Status:</strong> {task.status} ({task.statusCategoryKey || 'N/A'})</p>
-                          </li>
-                        ))}
-                      </ul>
-                    </ScrollArea>
+                    {metrics.jiraTaskDetails.length > 0 ? (
+                        <ScrollArea className="h-[200px] mt-2">
+                        <ul className="space-y-2">
+                            {metrics.jiraTaskDetails.map((task) => (
+                            <li key={task.key} className="text-xs border-b pb-1">
+                                <p><strong>Key:</strong> {task.key} ({task.type})</p>
+                                <p><strong>Summary:</strong> {task.summary}</p>
+                                <p><strong>Status:</strong> {task.status} ({task.statusCategoryKey || 'N/A'})</p>
+                            </li>
+                            ))}
+                        </ul>
+                        </ScrollArea>
+                    ) : (
+                        <p className="text-xs text-muted-foreground mt-2">No Jira tasks found for this period.</p>
+                    )}
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>
             )}
-             {metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && (
+             {!metrics.jiraTaskDetails && ( // Fallback if jiraTaskDetails is null/undefined for some reason
                  <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                     <div className="flex items-center gap-2">
                         <ListChecksIcon className="h-5 w-5 text-blue-500" />
