@@ -23,7 +23,7 @@ export interface HistoricalScore {
   riskLevel: 'Low' | 'Moderate' | 'High';
   summary: string;
   activitiesCount: number;
-  activityError?: string; // Added to hold errors for specific historical day activities
+  activityError?: string;
 }
 
 
@@ -41,9 +41,8 @@ export interface TeamMemberFocus {
 
   isLoadingScore: boolean;
   scoreError?: string | null;
-  activityError?: string | null; // For current day activity fetching errors
+  activityError?: string | null;
   isLoadingActivities?: boolean;
-  // onRetry?: () => Promise<void>; // This was a placeholder, actual retry logic is in page
 }
 
 export interface Task {
@@ -65,8 +64,8 @@ export interface MicrosoftGraphUser {
 // Definition for a raw Jira issue object
 export interface JiraIssue {
   key: string;
-  id: string; 
-  self: string; 
+  id: string;
+  self: string;
   fields: {
     summary: string;
     status: {
@@ -76,8 +75,8 @@ export interface JiraIssue {
         name?: string;
       };
     };
-    updated: string; 
-    created: string; 
+    updated: string;
+    created: string;
     issuetype: {
       name: string;
       iconUrl?: string;
@@ -118,7 +117,7 @@ export interface GenericActivityItem {
   details?: string;
   source: 'teams' | 'jira' | 'm365' | 'github' | 'other';
   durationMinutes?: number;
-  jiraStatusCategoryKey?: string; // Added to track Jira issue status category
+  jiraStatusCategoryKey?: string;
 }
 
 export interface CalculateFragmentationScoreInputType {
@@ -134,3 +133,10 @@ export interface FragmentationDataPoint {
   riskLevel?: 'Low' | 'Moderate' | 'High';
 }
 
+export interface UserActivityMetrics {
+  userId: string;
+  totalMeetingMinutes: number;
+  averageResponseTimeMinutes: number | null; // Placeholder for now
+  meetingCount: number;
+  error?: string;
+}

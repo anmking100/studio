@@ -18,7 +18,7 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
-import { LayoutDashboard, Users, ListChecks, Settings, LogOut, ExternalLink, Briefcase, Cog, FileJson } from "lucide-react"; // Added FileJson
+import { LayoutDashboard, Users, ListChecks, Settings, LogOut, ExternalLink, Briefcase, Cog, FileJson, BarChartHorizontalBig } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useRouter } from "next/navigation";
@@ -36,6 +36,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, group: "Main" },
   { href: "/team-overview", label: "Team Overview", icon: Users, group: "Main" },
   { href: "/task-batching", label: "Task Batching", icon: ListChecks, group: "Main" },
+  { href: "/user-activity-report", label: "User Activity Report", icon: BarChartHorizontalBig, group: "Reports" },
   {
     href: "/integrations/microsoft-graph",
     label: "MS Graph Users",

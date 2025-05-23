@@ -13,6 +13,7 @@ const pageTitles: { [key: string]: string } = {
   "/dashboard": "Dashboard",
   "/team-overview": "Team Overview",
   "/task-batching": "Task Batching Suggestions",
+  "/user-activity-report": "User Activity Report",
   "/integrations/microsoft-graph": "Microsoft Graph Users",
   "/integrations/teams": "Microsoft Teams Integration",
   "/integrations/jira": "Jira Users",
