@@ -35,39 +35,6 @@ import { ChartContainer, ChartTooltipContent, type ChartConfig } from "@/compone
 
 const LIVE_DATA_START_DATE = startOfDay(new Date('2025-05-22T00:00:00.000Z'));
 
-// Helper to calculate metrics from mock activities
-function calculateMetricsFromMockActivities(activities: GenericActivityItem[], userId: string): UserActivityMetrics {
-  let totalMeetingMinutes = 0;
-  const jiraTaskDetails: JiraTaskDetail[] = [];
-  let jiraActivityIndex = 0; 
-
-  activities.forEach(activity => {
-    if (activity.type === 'teams_meeting' && activity.durationMinutes) {
-      totalMeetingMinutes += activity.durationMinutes;
-    }
-    if (activity.source === 'jira' && activity.type.startsWith('jira_issue_')) {
-      const detail: JiraTaskDetail = {
-        key: `MOCK-${activity.details?.substring(0,10) || Math.random().toString(36).substring(2, 7)}-${jiraActivityIndex++}`,
-        summary: activity.details || "Mock Jira Task",
-        status: activity.jiraStatusCategoryKey === 'done' ? 'Done' : activity.jiraStatusCategoryKey === 'indeterminate' ? 'In Progress' : 'To Do',
-        type: activity.type.replace('jira_issue_', ''),
-        statusCategoryKey: activity.jiraStatusCategoryKey,
-      };
-      jiraTaskDetails.push(detail);
-    }
-  });
-
-  return {
-    userId,
-    totalMeetingMinutes,
-    averageResponseTimeMinutes: null,
-    meetingCount: activities.filter(a => a.type === 'teams_meeting').length,
-    jiraTasksWorkedOnCount: jiraTaskDetails.length,
-    jiraTaskDetails: jiraTaskDetails,
-  };
-}
-
-
 interface DailyChartDataPoint {
   date: string; // Formatted for chart axis e.g. "May 20"
   isoDate: string; // Full ISO date string for reference
@@ -93,6 +60,38 @@ const jiraTasksChartConfig = {
 } satisfies ChartConfig;
 
 
+// Helper to calculate metrics from mock activities for the report page
+function calculateMetricsFromMockActivities(activities: GenericActivityItem[], userId: string): UserActivityMetrics {
+  let totalMeetingMinutes = 0;
+  const jiraTaskDetails: JiraTaskDetail[] = [];
+  let jiraActivityIndex = 0;
+
+  activities.forEach((activity, index) => {
+    if (activity.type === 'teams_meeting' && activity.durationMinutes) {
+      totalMeetingMinutes += activity.durationMinutes;
+    }
+    if (activity.source === 'jira' && activity.type.startsWith('jira_issue_')) {
+      const detail: JiraTaskDetail = {
+        key: `MOCK-${activity.details?.substring(0,10) || Math.random().toString(36).substring(2, 7)}-${index}`, // Ensure unique key with index
+        summary: activity.details || "Mock Jira Task",
+        status: activity.jiraStatusCategoryKey === 'done' ? 'Done' : activity.jiraStatusCategoryKey === 'indeterminate' ? 'In Progress' : 'To Do',
+        type: activity.type.replace('jira_issue_', ''),
+        statusCategoryKey: activity.jiraStatusCategoryKey,
+      };
+      jiraTaskDetails.push(detail);
+    }
+  });
+
+  return {
+    userId,
+    totalMeetingMinutes,
+    averageResponseTimeMinutes: null,
+    meetingCount: activities.filter(a => a.type === 'teams_meeting').length,
+    jiraTasksWorkedOnCount: jiraTaskDetails.length,
+    jiraTaskDetails: jiraTaskDetails,
+  };
+}
+
 export default function UserActivityReportPage() {
   const [allMsGraphUsers, setAllMsGraphUsers] = useState<MicrosoftGraphUser[]>([]);
   const [isLoadingMsUsers, setIsLoadingMsUsers] = useState(true);
@@ -115,6 +114,7 @@ export default function UserActivityReportPage() {
   const [dailyChartData, setDailyChartData] = useState<DailyChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
   const [isLiveDataPeriodForGraphs, setIsLiveDataPeriodForGraphs] = useState(false);
+  // const [dataSourceMsg, setDataSourceMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchMsGraphUsers = async () => {
@@ -154,15 +154,18 @@ export default function UserActivityReportPage() {
     setMetricsError(null);
     setMetrics(null);
     setDailyChartData([]);
+    // setDataSourceMsg(null);
     
     const useMockDataForPeriod = isBefore(dateRange.to, LIVE_DATA_START_DATE);
     setIsLiveDataPeriodForGraphs(!useMockDataForPeriod);
 
     if (useMockDataForPeriod) {
+      // setDataSourceMsg("Metrics based on consistent mock activity patterns for this historical period.");
       console.log(`USER ACTIVITY REPORT: Using MOCK data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
+      
+      const daysInSelectedRange = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
       let aggregatedMockActivitiesForRange: GenericActivityItem[] = [];
       const newDailyChartDataPoints: DailyChartDataPoint[] = [];
-      const daysInSelectedRange = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
 
       for (const day of daysInSelectedRange) {
         const mockActivitiesForDay = getConsistentMockActivitiesForDay(selectedUser.id!, day);
@@ -211,6 +214,7 @@ export default function UserActivityReportPage() {
       setIsLoadingChartData(false);
 
     } else { 
+      // setDataSourceMsg("Metrics based on live API data. Daily chart breakdown for live data is not generated by this specific report.");
       console.log(`USER ACTIVITY REPORT: Using LIVE data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
       try {
         const params = new URLSearchParams({
@@ -273,6 +277,9 @@ export default function UserActivityReportPage() {
 
   const showCharts = !isLoadingChartData && dailyChartData.length > 0 && !isLiveDataPeriodForGraphs;
   console.log("USER ACTIVITY REPORT: Chart rendering check -> isLoadingChartData:", isLoadingChartData, "dailyChartData.length:", dailyChartData.length, "isLiveDataPeriodForGraphs:", isLiveDataPeriodForGraphs, "showCharts:", showCharts);
+   if (showCharts) {
+    console.log("USER ACTIVITY REPORT: Chart Data Processed. Rendering charts...");
+  }
 
 
   return (
@@ -286,7 +293,7 @@ export default function UserActivityReportPage() {
                 User Activity Report
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Metrics for periods ending before {format(LIVE_DATA_START_DATE, "PP")} use consistent mock patterns. Live data otherwise.
+                Metrics for periods ending before {format(LIVE_DATA_START_DATE, "PP")} use consistent mock patterns. Live data otherwise. Charts show daily trends for mock data periods.
               </CardDescription>
             </div>
           </div>
@@ -420,6 +427,14 @@ export default function UserActivityReportPage() {
         </CardFooter>
       </Card>
 
+      {/* {dataSourceMsg && (
+        <Alert variant="default" className="mt-4 border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400 shadow-sm">
+          <Info className="h-5 w-5 text-blue-600 dark:text-blue-500" />
+          <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Data Source Note</AlertTitle>
+          <AlertDescription className="text-blue-600 dark:text-blue-500">{dataSourceMsg}</AlertDescription>
+        </Alert>
+      )} */}
+
       {(isLoadingMetrics || isLoadingChartData) && (
         <div className="flex items-center justify-center p-8">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -457,7 +472,7 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <MessageSquareText className="h-5 w-5 text-purple-500" />
                     <span className="font-medium">Average Message Response Time:</span>
@@ -466,7 +481,7 @@ export default function UserActivityReportPage() {
             </div>
             
             {(metrics.jiraTaskDetails) ? (
-                (metrics.jiraTaskDetails.length > 0 || (jiraTaskStatusCounts.total > 0 && useMockDataForPeriod) ) ? ( // Ensure accordion shows if mock data has counts
+                (metrics.jiraTaskDetails.length > 0 || (jiraTaskStatusCounts.total > 0 && useMockDataForPeriod) ) ? (
                     <Accordion type="single" collapsible className="w-full" defaultValue="jira-task-summary">
                     <AccordionItem value="jira-task-summary">
                         <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
@@ -483,8 +498,8 @@ export default function UserActivityReportPage() {
                         <AccordionContent className="pt-1 pb-3 px-3 border rounded-b-md border-t-0">
                               <ScrollArea className="h-[200px] mt-2">
                               <ul className="space-y-2">
-                                  {metrics.jiraTaskDetails.map((task, index) => (
-                                  <li key={task.key || `mock-task-${index}`} className="text-xs border-b pb-1">
+                                  {metrics.jiraTaskDetails.map((task) => (
+                                  <li key={task.key} className="text-xs border-b pb-1">
                                       <p><strong>Key:</strong> {task.key} ({task.type})</p>
                                       <p><strong>Summary:</strong> {task.summary}</p>
                                       <p><strong>Status:</strong> {task.status} (Category: {task.statusCategoryKey || 'N/A'})</p>
@@ -502,7 +517,7 @@ export default function UserActivityReportPage() {
                              <span className="font-medium">Jira Tasks Worked On:</span>
                         </div>
                          <span className="font-semibold text-lg">
-                           {isLiveDataPeriodForGraphs ? "0" : "0 (No mock Jira tasks for this period)"}
+                           {isLiveDataPeriodForGraphs ? "0" : "0"}
                         </span>
                     </div>
                 )
@@ -538,7 +553,7 @@ export default function UserActivityReportPage() {
                   <LineChartIcon className="h-5 w-5 text-destructive" />
                   <CardTitle className="text-md font-semibold">Daily Stress Load (Fragmentation)</CardTitle>
                 </div>
-                <CardDescription>Based on mock daily activity patterns.</CardDescription>
+                <CardDescription>Based on daily activity patterns.</CardDescription>
               </CardHeader>
               <CardContent className="h-[250px]">
                 <ChartContainer config={stressChartConfig}>
@@ -546,7 +561,7 @@ export default function UserActivityReportPage() {
                     <LineChart data={dailyChartData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="date" style={{ fontSize: '10px' }} />
-                      <YAxis domain={[0, 5]} allowDataOverflow={true} style={{ fontSize: '10px' }} tickFormatter={(val) => typeof val === 'number' ? val.toFixed(1) : String(val) } />
+                      <YAxis domain={[0, 5]} style={{ fontSize: '10px' }} tickFormatter={(val) => typeof val === 'number' ? val.toFixed(1) : String(val) } />
                       <Tooltip content={<ChartTooltipContent indicator="line" />} />
                       <Line type="monotone" dataKey="fragmentationScore" stroke="var(--color-score)" strokeWidth={2} dot={{ r: 3 }} name="Score" />
                     </LineChart>
@@ -562,7 +577,7 @@ export default function UserActivityReportPage() {
                       <BarChart2 className="h-5 w-5 text-primary" />
                       <CardTitle className="text-md font-semibold">Daily Meeting Hours</CardTitle>
                   </div>
-                <CardDescription>Based on mock daily activity patterns.</CardDescription>
+                <CardDescription>Based on daily activity patterns.</CardDescription>
               </CardHeader>
               <CardContent className="h-[250px]">
                 <ChartContainer config={meetingHoursChartConfig}>
@@ -586,7 +601,7 @@ export default function UserActivityReportPage() {
                       <ListFilter className="h-5 w-5 text-blue-500" />
                       <CardTitle className="text-md font-semibold">Daily Jira Tasks by Status</CardTitle>
                   </div>
-                <CardDescription>Based on mock daily activity patterns.</CardDescription>
+                <CardDescription>Based on daily activity patterns.</CardDescription>
               </CardHeader>
               <CardContent className="h-[250px]">
                 <ChartContainer config={jiraTasksChartConfig}>
@@ -611,6 +626,3 @@ export default function UserActivityReportPage() {
     </div>
   );
 }
-    
-
-    
