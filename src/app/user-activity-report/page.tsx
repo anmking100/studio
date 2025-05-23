@@ -11,12 +11,12 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Calendar } from "@/components/ui/calendar";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import type { DateRange } from "react-day-picker";
-import { format, startOfDay, subDays, endOfDay, parseISO, eachDayOfInterval, isBefore, addHours, isAfter } from "date-fns";
+import { format, startOfDay, subDays, endOfDay, parseISO, eachDayOfInterval, isBefore, addHours, isAfter, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { UserActivityMetrics, MicrosoftGraphUser, JiraTaskDetail, GenericActivityItem, CalculateFragmentationScoreInputType, CalculateFragmentationScoreOutput } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { calculateScoreAlgorithmically } from "@/lib/score-calculator";
-import { Label } from "@/components/ui/label"; // Added Label import
+import { Label } from "@/components/ui/label";
 import {
   ResponsiveContainer,
   LineChart,
@@ -33,13 +33,12 @@ import { ChartContainer, ChartTooltipContent, type ChartConfig } from "@/compone
 
 const LIVE_DATA_START_DATE = startOfDay(new Date('2025-05-22T00:00:00.000Z'));
 
-// Helper to generate consistent mock activities for a given user and day (copied from TeamOverviewPage)
+// Helper to generate consistent mock activities for a given user and day
 function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericActivityItem[] {
   const activities: GenericActivityItem[] = [];
   const dayOfMonth = day.getUTCDate();
   const userIdInt = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
 
-  // Mock meetings - pattern based on day and userIdInt
   if ((dayOfMonth + userIdInt) % 4 === 1) {
     activities.push({
       type: 'teams_meeting',
@@ -59,8 +58,7 @@ function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericAc
     });
   }
 
-  // Mock Jira tasks
-  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2) + 1; // 1 to 3 mock jira tasks
+  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2) + 1;
   for (let i = 0; i < numJiraTasks; i++) {
     const isDone = (dayOfMonth + i + userIdInt) % 3 === 0;
     const taskType = (i + userIdInt) % 2 === 0 ? 'jira_issue_task' : 'jira_issue_bug';
@@ -79,6 +77,7 @@ function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericAc
 function calculateMetricsFromMockActivities(activities: GenericActivityItem[], userId: string): UserActivityMetrics {
   let totalMeetingMinutes = 0;
   const jiraTaskDetails: JiraTaskDetail[] = [];
+  let jiraActivityIndex = 0; // For unique key generation
 
   activities.forEach(activity => {
     if (activity.type === 'teams_meeting' && activity.durationMinutes) {
@@ -86,7 +85,7 @@ function calculateMetricsFromMockActivities(activities: GenericActivityItem[], u
     }
     if (activity.source === 'jira' && activity.type.startsWith('jira_issue_')) {
       const detail: JiraTaskDetail = {
-        key: `MOCK-${activity.details?.substring(0,10) || Math.random().toString(36).substring(2, 7)}`,
+        key: `MOCK-${activity.details?.substring(0,10) || 'task'}-${jiraActivityIndex++}`, // Ensure unique key
         summary: activity.details || "Mock Jira Task",
         status: activity.jiraStatusCategoryKey === 'done' ? 'Done' : activity.jiraStatusCategoryKey === 'indeterminate' ? 'In Progress' : 'To Do',
         type: activity.type.replace('jira_issue_', ''),
@@ -99,12 +98,13 @@ function calculateMetricsFromMockActivities(activities: GenericActivityItem[], u
   return {
     userId,
     totalMeetingMinutes,
-    averageResponseTimeMinutes: null, // Placeholder
+    averageResponseTimeMinutes: null,
     meetingCount: activities.filter(a => a.type === 'teams_meeting').length,
     jiraTasksWorkedOnCount: jiraTaskDetails.length,
     jiraTaskDetails: jiraTaskDetails,
   };
 }
+
 
 interface DailyChartDataPoint {
   date: string; // Formatted for chart axis e.g. "May 20"
@@ -125,9 +125,9 @@ const meetingHoursChartConfig = {
 } satisfies ChartConfig;
 
 const jiraTasksChartConfig = {
-  completed: { label: "Completed", color: "hsl(var(--chart-2))" },
-  ongoing: { label: "Ongoing", color: "hsl(var(--chart-4))" },
-  pending: { label: "Pending", color: "hsl(var(--chart-5))" },
+  completed: { label: "Completed", color: "hsl(var(--chart-2))" }, // Green
+  ongoing: { label: "Ongoing", color: "hsl(var(--chart-4))" },   // Yellow/Orange
+  pending: { label: "Pending", color: "hsl(var(--chart-5))" },   // Red/Blue
 } satisfies ChartConfig;
 
 
@@ -149,7 +149,7 @@ export default function UserActivityReportPage() {
   const [metrics, setMetrics] = useState<UserActivityMetrics | null>(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
-
+  
   const [dailyChartData, setDailyChartData] = useState<DailyChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
   const [isLiveDataPeriodForGraphs, setIsLiveDataPeriodForGraphs] = useState(false);
@@ -192,10 +192,10 @@ export default function UserActivityReportPage() {
     setMetricsError(null);
     setMetrics(null);
     setDailyChartData([]);
-
+    
     const useMockDataForPeriod = isBefore(dateRange.to, LIVE_DATA_START_DATE);
     setIsLiveDataPeriodForGraphs(!useMockDataForPeriod);
-    
+
     if (useMockDataForPeriod) {
       console.log(`USER ACTIVITY REPORT: Using MOCK data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
       let aggregatedMockActivitiesForRange: GenericActivityItem[] = [];
@@ -225,7 +225,7 @@ export default function UserActivityReportPage() {
             if (task.jiraStatusCategoryKey === 'done') dailyJiraCompleted++;
             else if (task.jiraStatusCategoryKey === 'indeterminate') dailyJiraOngoing++;
             else if (task.jiraStatusCategoryKey === 'new') dailyJiraPending++;
-            else dailyJiraOngoing++; // Default to ongoing if category key is something else
+            else dailyJiraOngoing++; 
         });
         
         newDailyChartDataPoints.push({
@@ -241,6 +241,7 @@ export default function UserActivityReportPage() {
       
       const mockMetrics = calculateMetricsFromMockActivities(aggregatedMockActivitiesForRange, selectedUser.id!);
       const sortedDailyChartData = newDailyChartDataPoints.sort((a,b) => new Date(a.isoDate).getTime() - new Date(b.isoDate).getTime());
+      
       console.log("USER ACTIVITY REPORT: Populating dailyChartData (mock period) with:", sortedDailyChartData);
       setDailyChartData(sortedDailyChartData);
       setMetrics(mockMetrics);
@@ -270,7 +271,7 @@ export default function UserActivityReportPage() {
         }
         setMetrics(responseData as UserActivityMetrics);
         setDailyChartData([]); 
-        console.log("USER ACTIVITY REPORT: Live data fetched. Daily chart data for live periods is not currently generated by this API.");
+        console.log("USER ACTIVITY REPORT: Live data fetched. Daily chart data for live periods is not currently generated by this API's aggregated metrics.");
       } catch (err: any) {
         console.error("Error fetching user activity metrics (live):", err);
         setMetricsError(err.message || "An unknown error occurred while fetching live metrics.");
@@ -298,7 +299,7 @@ export default function UserActivityReportPage() {
           acc.ongoing++;
         } else if (statusKey === 'new') {
           acc.pending++;
-        } else if (statusKey !== '') { // Count any other non-empty status as ongoing for this breakdown
+        } else if (statusKey !== '') { 
            acc.ongoing++;
         }
         return acc;
@@ -323,7 +324,7 @@ export default function UserActivityReportPage() {
                 User Activity Report
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Generate activity summaries. Metrics based on mock patterns for dates before {format(LIVE_DATA_START_DATE, "PP")}.
+                Metrics based on mock patterns for dates before {format(LIVE_DATA_START_DATE, "PP")}. Live data otherwise.
               </CardDescription>
             </div>
           </div>
@@ -494,54 +495,64 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <MessageSquareText className="h-5 w-5 text-purple-500" />
                     <span className="font-medium">Average Message Response Time:</span>
                 </div>
                 <span className="font-semibold text-sm text-muted-foreground">(Feature Coming Soon)</span>
             </div>
-
+            
             {(metrics.jiraTaskDetails) ? (
-              (metrics.jiraTaskDetails.length > 0) ? (
-                <Accordion type="single" collapsible className="w-full" defaultValue="jira-task-summary">
-                  <AccordionItem value="jira-task-summary">
-                    <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
-                      <div className="flex items-center gap-1 text-left flex-wrap">
-                          <ListChecksIcon className="h-5 w-5 text-blue-500 shrink-0 mr-1" />
-                          <span className="font-semibold">Jira Tasks:</span>
-                          <span className="text-xs">(Total: {jiraTaskStatusCounts.total} |</span>
-                          <span className="text-xs flex items-center"><CheckCircle className="h-3.5 w-3.5 mr-1 text-green-600 shrink-0"/>Completed: {jiraTaskStatusCounts.completed} |</span>
-                          <span className="text-xs flex items-center"><Hourglass className="h-3.5 w-3.5 mr-1 text-yellow-600 shrink-0"/>Ongoing: {jiraTaskStatusCounts.ongoing} |</span>
-                          <span className="text-xs flex items-center"><FileQuestion className="h-3.5 w-3.5 mr-1 text-red-500 shrink-0"/>Pending: {jiraTaskStatusCounts.pending})</span>
-                          <ChevronDown className="h-5 w-5 text-blue-500 transition-transform duration-200 group-data-[state=open]:rotate-180 ml-auto shrink-0" />
-                      </div>
-                    </AccordionTrigger>
-                    <AccordionContent className="pt-1 pb-3 px-3 border rounded-b-md border-t-0">
-                          <ScrollArea className="h-[200px] mt-2">
-                          <ul className="space-y-2">
-                              {metrics.jiraTaskDetails.map((task) => (
-                              <li key={task.key} className="text-xs border-b pb-1">
-                                  <p><strong>Key:</strong> {task.key} ({task.type})</p>
-                                  <p><strong>Summary:</strong> {task.summary}</p>
-                                  <p><strong>Status:</strong> {task.status} (Category: {task.statusCategoryKey || 'N/A'})</p>
-                              </li>
-                              ))}
-                          </ul>
-                          </ScrollArea>
-                    </AccordionContent>
-                  </AccordionItem>
-                </Accordion>
-              ) : (
-                 <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+                (metrics.jiraTaskDetails.length > 0) ? (
+                    <Accordion type="single" collapsible className="w-full" defaultValue="jira-task-summary">
+                    <AccordionItem value="jira-task-summary">
+                        <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
+                            <div className="flex items-center gap-1 text-left flex-wrap">
+                                <ListChecksIcon className="h-5 w-5 text-blue-500 shrink-0 mr-1" />
+                                <span className="font-semibold">Jira Tasks:</span>
+                                <span className="text-xs">(Total: {jiraTaskStatusCounts.total} |</span>
+                                <span className="text-xs flex items-center"><CheckCircle className="h-3.5 w-3.5 mr-1 text-green-600 shrink-0"/>Completed: {jiraTaskStatusCounts.completed} |</span>
+                                <span className="text-xs flex items-center"><Hourglass className="h-3.5 w-3.5 mr-1 text-yellow-600 shrink-0"/>Ongoing: {jiraTaskStatusCounts.ongoing} |</span>
+                                <span className="text-xs flex items-center"><FileQuestion className="h-3.5 w-3.5 mr-1 text-red-500 shrink-0"/>Pending: {jiraTaskStatusCounts.pending})</span>
+                                <ChevronDown className="h-5 w-5 text-blue-500 transition-transform duration-200 group-data-[state=open]:rotate-180 ml-auto shrink-0" />
+                            </div>
+                        </AccordionTrigger>
+                        <AccordionContent className="pt-1 pb-3 px-3 border rounded-b-md border-t-0">
+                              <ScrollArea className="h-[200px] mt-2">
+                              <ul className="space-y-2">
+                                  {metrics.jiraTaskDetails.map((task) => (
+                                  <li key={task.key} className="text-xs border-b pb-1">
+                                      <p><strong>Key:</strong> {task.key} ({task.type})</p>
+                                      <p><strong>Summary:</strong> {task.summary}</p>
+                                      <p><strong>Status:</strong> {task.status} (Category: {task.statusCategoryKey || 'N/A'})</p>
+                                  </li>
+                                  ))}
+                              </ul>
+                              </ScrollArea>
+                        </AccordionContent>
+                    </AccordionItem>
+                    </Accordion>
+                ) : (
+                    <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+                        <div className="flex items-center gap-2">
+                            <ListChecksIcon className="h-5 w-5 text-blue-500" />
+                            <span className="font-medium">Jira Tasks Worked On:</span>
+                        </div>
+                        <span className="font-semibold text-lg">
+                            {isLiveDataPeriodForGraphs ? "0 (Live data, details from API)" : "0 (No mock Jira tasks for this period)"}
+                        </span>
+                    </div>
+                )
+            ) : (
+                <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                     <div className="flex items-center gap-2">
                         <ListChecksIcon className="h-5 w-5 text-blue-500" />
                         <span className="font-medium">Jira Tasks Worked On:</span>
                     </div>
-                    <span className="font-semibold text-lg">0</span>
+                    <span className="font-semibold text-lg">Loading...</span>
                 </div>
-              )
-            ) : null}
+            )}
             
             {metrics.error && (
                  <Alert variant="destructive" className="mt-2">
@@ -553,8 +564,7 @@ export default function UserActivityReportPage() {
           </CardContent>
         </Card>
       )}
-
-      {/* Charts Section */}
+      
       {showCharts && (
         <>
           <p className="text-center text-sm text-muted-foreground mt-4">Chart Data Processed. Rendering charts...</p>
@@ -639,4 +649,6 @@ export default function UserActivityReportPage() {
     </div>
   );
 }
+    
+
     
