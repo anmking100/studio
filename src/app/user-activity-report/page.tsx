@@ -68,10 +68,8 @@ export default function UserActivityReportPage() {
       setMetricsError("Selected user is missing an ID. Cannot generate report.");
       return;
     }
-    if (!selectedUser.userPrincipalName) {
-      setMetricsError("Selected user is missing an email (User Principal Name). This is needed for Jira task fetching.");
-      // Still allow fetching MS Graph data if UPN is missing, but Jira part will be skipped by API
-    }
+    // userPrincipalName is used as userEmail for Jira.
+    // The API route for user-activity-metrics will handle cases where userEmail might be missing if it only affects Jira part.
     if (!dateRange?.from || !dateRange?.to) {
       setMetricsError("Please select a valid date range.");
       return;
@@ -87,9 +85,11 @@ export default function UserActivityReportPage() {
         startDate: dateRange.from.toISOString(),
         endDate: dateRange.to.toISOString(),
       });
-      // Only add userEmail if it exists, to prevent errors if it's somehow missing
+      
       if (selectedUser.userPrincipalName) {
         params.append('userEmail', selectedUser.userPrincipalName);
+      } else {
+        console.warn(`User ${selectedUser.displayName} (ID: ${selectedUser.id}) is missing userPrincipalName. Jira tasks might not be fetched.`);
       }
 
       const response = await fetch(`/api/user-activity-metrics?${params.toString()}`);
@@ -117,7 +117,6 @@ export default function UserActivityReportPage() {
     }
     const counts = metrics.jiraTaskDetails.reduce(
       (acc, task) => {
-        // Ensure task.statusCategoryKey is a string before calling toLowerCase
         const statusKey = typeof task.statusCategoryKey === 'string' ? task.statusCategoryKey.toLowerCase() : '';
         if (statusKey === 'done') {
           acc.completed++;
@@ -125,7 +124,7 @@ export default function UserActivityReportPage() {
           acc.ongoing++;
         } else if (statusKey === 'new') {
           acc.pending++;
-        } else if (statusKey !== '') { // Catch other non-empty status keys as ongoing
+        } else if (statusKey !== '') { 
            acc.ongoing++;
         }
         return acc;
@@ -316,6 +315,13 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
+             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+                <div className="flex items-center gap-2">
+                    <MessageSquareText className="h-5 w-5 text-orange-500" />
+                    <span className="font-medium">Average Message Response Time:</span>
+                </div>
+                <span className="font-semibold text-sm text-muted-foreground">(Feature Coming Soon)</span>
+            </div>
             
             {metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0 && (
               <Accordion type="single" collapsible className="w-full">
@@ -356,14 +362,6 @@ export default function UserActivityReportPage() {
                     <span className="font-semibold text-lg">0</span>
                 </div>
             )}
-
-            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
-                <div className="flex items-center gap-2">
-                    <MessageSquareText className="h-5 w-5 text-orange-500" />
-                    <span className="font-medium">Average Message Response Time:</span>
-                </div>
-                <span className="font-semibold text-sm text-muted-foreground">(Feature Coming Soon)</span>
-            </div>
             
             {metrics.error && (
                  <Alert variant="destructive" className="mt-2">
