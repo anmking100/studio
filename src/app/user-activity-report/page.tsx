@@ -58,7 +58,7 @@ function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericAc
   return activities.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
-function calculateMetricsFromMockActivities(activities: GenericActivityItem[]): UserActivityMetrics {
+function calculateMetricsFromMockActivities(activities: GenericActivityItem[], userId: string): UserActivityMetrics {
   let totalMeetingMinutes = 0;
   const jiraTaskDetails: JiraTaskDetail[] = [];
 
@@ -68,7 +68,7 @@ function calculateMetricsFromMockActivities(activities: GenericActivityItem[]): 
     }
     if (activity.source === 'jira' && activity.type.startsWith('jira_issue_')) {
       jiraTaskDetails.push({
-        key: `MOCK-${Math.random().toString(36).substring(2, 7)}`, // Mock key
+        key: `MOCK-${Math.random().toString(36).substring(2, 7)}`, 
         summary: activity.details || "Mock Jira Task",
         status: activity.jiraStatusCategoryKey === 'done' ? 'Done' : activity.jiraStatusCategoryKey === 'indeterminate' ? 'In Progress' : 'To Do',
         type: activity.type.replace('jira_issue_', ''),
@@ -78,9 +78,9 @@ function calculateMetricsFromMockActivities(activities: GenericActivityItem[]): 
   });
 
   return {
-    userId: "mockUser", // Placeholder as this is aggregated mock data
+    userId,
     totalMeetingMinutes,
-    averageResponseTimeMinutes: null, // Still placeholder
+    averageResponseTimeMinutes: null, 
     meetingCount: activities.filter(a => a.type === 'teams_meeting').length,
     jiraTasksWorkedOnCount: jiraTaskDetails.length,
     jiraTaskDetails: jiraTaskDetails,
@@ -153,7 +153,7 @@ export default function UserActivityReportPage() {
     const useMockData = isBefore(dateRange.to, LIVE_DATA_START_DATE);
 
     if (useMockData) {
-      setDataSourceMsg("Metrics based on consistent mock activity patterns for this historical period.");
+      setDataSourceMsg(`Metrics based on consistent mock activity patterns for this historical period (up to ${format(subDays(LIVE_DATA_START_DATE, 1), "PP")}).`);
       console.log(`USER ACTIVITY REPORT: Using MOCK data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
       let aggregatedMockActivities: GenericActivityItem[] = [];
       const daysInSelectedRange = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
@@ -163,13 +163,12 @@ export default function UserActivityReportPage() {
         aggregatedMockActivities.push(...mockActivitiesForDay);
       });
       
-      const mockMetrics = calculateMetricsFromMockActivities(aggregatedMockActivities);
-      mockMetrics.userId = selectedUser.id; // Set the correct userId
+      const mockMetrics = calculateMetricsFromMockActivities(aggregatedMockActivities, selectedUser.id!);
       setMetrics(mockMetrics);
       setIsLoadingMetrics(false);
 
     } else {
-      setDataSourceMsg("Metrics based on live data from integrated APIs for this period.");
+      setDataSourceMsg(`Metrics based on live data from integrated APIs for this period (from ${format(LIVE_DATA_START_DATE, "PP")}).`);
       console.log(`USER ACTIVITY REPORT: Using LIVE data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
       try {
         const params = new URLSearchParams({
@@ -201,7 +200,7 @@ export default function UserActivityReportPage() {
   };
 
   const totalMeetingHours = metrics?.totalMeetingMinutes ? (metrics.totalMeetingMinutes / 60).toFixed(1) : "0.0";
-  const participatedDurationMinutes = metrics?.totalMeetingMinutes ? metrics.totalMeetingMinutes * 0.7 : 0; // This is still 70%
+  const participatedDurationMinutes = metrics?.totalMeetingMinutes ? metrics.totalMeetingMinutes * 0.7 : 0; 
   const participatedDurationHours = (participatedDurationMinutes / 60).toFixed(1);
 
   const jiraTaskStatusCounts = useMemo(() => {
@@ -239,7 +238,7 @@ export default function UserActivityReportPage() {
                 User Activity Report
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Generate activity summaries for a specific user and time frame. Data before {format(LIVE_DATA_START_DATE, "PP")} uses mock patterns.
+                Generate activity summaries for a specific user and time frame. Data for periods ending before {format(LIVE_DATA_START_DATE, "PP")} uses mock patterns.
               </CardDescription>
             </div>
           </div>
@@ -386,15 +385,7 @@ export default function UserActivityReportPage() {
           <AlertDescription>{metricsError}</AlertDescription>
         </Alert>
       )}
-      {dataSourceMsg && !isLoadingMetrics && !metricsError && (
-        <Alert variant="default" className="border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400 shadow-sm">
-            <BarChartHorizontalBig className="h-5 w-5 text-blue-600 dark:text-blue-500" />
-            <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Data Source Note</AlertTitle>
-            <AlertDescription className="text-blue-600 dark:text-blue-500">
-                {dataSourceMsg}
-            </AlertDescription>
-        </Alert>
-      )}
+
       {metrics && !isLoadingMetrics && (
         <Card>
           <CardHeader>
@@ -418,7 +409,7 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <MessageSquareText className="h-5 w-5 text-orange-500" />
                     <span className="font-medium">Average Message Response Time:</span>
@@ -426,7 +417,7 @@ export default function UserActivityReportPage() {
                 <span className="font-semibold text-sm text-muted-foreground">(Feature Coming Soon)</span>
             </div>
             
-            {(metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0) || (metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && dataSourceMsg?.includes("live data")) ? ( // Show accordion if live and 0, or if tasks exist
+            {(metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0) || (metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && dataSourceMsg && dataSourceMsg.includes("live data")) ? (
               <Accordion type="single" collapsible className="w-full">
                 <AccordionItem value="jira-task-details">
                    <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
@@ -448,7 +439,7 @@ export default function UserActivityReportPage() {
                             <li key={task.key} className="text-xs border-b pb-1">
                                 <p><strong>Key:</strong> {task.key} ({task.type})</p>
                                 <p><strong>Summary:</strong> {task.summary}</p>
-                                <p><strong>Status:</strong> {task.status} ({task.statusCategoryKey || 'N/A'})</p>
+                                <p><strong>Status:</strong> {task.status} (Category: {task.statusCategoryKey || 'N/A'})</p>
                             </li>
                             ))}
                         </ul>
@@ -459,13 +450,13 @@ export default function UserActivityReportPage() {
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>
-            ) : metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && dataSourceMsg?.includes("mock") ? (
+            ) : metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && dataSourceMsg && dataSourceMsg.includes("mock") ? (
                  <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                     <div className="flex items-center gap-2">
                         <ListChecksIcon className="h-5 w-5 text-blue-500" />
                         <span className="font-medium">Jira Tasks Worked On (Mock Data):</span>
                     </div>
-                    <span className="font-semibold text-lg">0</span>
+                    <span className="font-semibold text-lg">{jiraTaskStatusCounts.total}</span>
                 </div>
             ) : null}
             
