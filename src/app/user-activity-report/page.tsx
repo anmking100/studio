@@ -5,7 +5,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, CheckCircle, ListChecksIcon, ChevronDown, FileQuestion, Hourglass } from "lucide-react";
+import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, CheckCircle, ListChecksIcon, ChevronDown, FileQuestion, Hourglass, MessageSquareText } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Calendar } from "@/components/ui/calendar";
@@ -69,8 +69,8 @@ export default function UserActivityReportPage() {
       return;
     }
     if (!selectedUser.userPrincipalName) {
-      setMetricsError("Selected user is missing an email (User Principal Name). Cannot fetch Jira tasks.");
-      return;
+      setMetricsError("Selected user is missing an email (User Principal Name). This is needed for Jira task fetching.");
+      // Still allow fetching MS Graph data if UPN is missing, but Jira part will be skipped by API
     }
     if (!dateRange?.from || !dateRange?.to) {
       setMetricsError("Please select a valid date range.");
@@ -84,10 +84,14 @@ export default function UserActivityReportPage() {
     try {
       const params = new URLSearchParams({
         userId: selectedUser.id,
-        userEmail: selectedUser.userPrincipalName,
         startDate: dateRange.from.toISOString(),
         endDate: dateRange.to.toISOString(),
       });
+      // Only add userEmail if it exists, to prevent errors if it's somehow missing
+      if (selectedUser.userPrincipalName) {
+        params.append('userEmail', selectedUser.userPrincipalName);
+      }
+
       const response = await fetch(`/api/user-activity-metrics?${params.toString()}`);
       const responseData = await response.json();
 
@@ -113,14 +117,16 @@ export default function UserActivityReportPage() {
     }
     const counts = metrics.jiraTaskDetails.reduce(
       (acc, task) => {
-        if (task.statusCategoryKey === 'done') {
+        // Ensure task.statusCategoryKey is a string before calling toLowerCase
+        const statusKey = typeof task.statusCategoryKey === 'string' ? task.statusCategoryKey.toLowerCase() : '';
+        if (statusKey === 'done') {
           acc.completed++;
-        } else if (task.statusCategoryKey === 'indeterminate') {
+        } else if (statusKey === 'indeterminate') {
           acc.ongoing++;
-        } else if (task.statusCategoryKey === 'new') {
+        } else if (statusKey === 'new') {
           acc.pending++;
-        } else {
-           acc.ongoing++; // Fallback for other statuses
+        } else if (statusKey !== '') { // Catch other non-empty status keys as ongoing
+           acc.ongoing++;
         }
         return acc;
       },
@@ -350,6 +356,15 @@ export default function UserActivityReportPage() {
                     <span className="font-semibold text-lg">0</span>
                 </div>
             )}
+
+            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+                <div className="flex items-center gap-2">
+                    <MessageSquareText className="h-5 w-5 text-orange-500" />
+                    <span className="font-medium">Average Message Response Time:</span>
+                </div>
+                <span className="font-semibold text-sm text-muted-foreground">(Feature Coming Soon)</span>
+            </div>
+            
             {metrics.error && (
                  <Alert variant="destructive" className="mt-2">
                     <AlertTriangle className="h-4 w-4" />
