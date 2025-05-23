@@ -1,11 +1,10 @@
-
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, CheckCircle, ListChecksIcon, ChevronDown, FileQuestion, Hourglass, MessageSquareText } from "lucide-react";
+import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, CheckCircle, ListChecksIcon, ChevronDown, FileQuestion, Hourglass, MessageSquareText, LineChart as LineChartIcon, BarChart2, ListFilter } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Calendar } from "@/components/ui/calendar";
@@ -15,16 +14,31 @@ import { format, startOfDay, subDays, endOfDay, parseISO, eachDayOfInterval, isB
 import { cn } from "@/lib/utils";
 import type { UserActivityMetrics, MicrosoftGraphUser, JiraTaskDetail, GenericActivityItem } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { calculateScoreAlgorithmically, type CalculateFragmentationScoreOutput } from "@/lib/score-calculator"; // For daily stress score
+import {
+  ResponsiveContainer,
+  LineChart,
+  BarChart,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  Line,
+  Bar,
+  CartesianGrid,
+} from "recharts";
+import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart";
+
 
 const LIVE_DATA_START_DATE = startOfDay(new Date('2025-05-22T00:00:00.000Z'));
 
-// Helper to generate consistent mock activities for a given user and day (copied from team-overview)
+// Helper to generate consistent mock activities for a given user and day
 function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericActivityItem[] {
   const activities: GenericActivityItem[] = [];
   const dayOfMonth = day.getUTCDate();
   const userIdInt = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
 
-  if ((dayOfMonth + userIdInt) % 4 === 1) {
+  if ((dayOfMonth + userIdInt) % 4 === 1) { // Meeting pattern 1
     activities.push({
       type: 'teams_meeting',
       timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 10 + (userIdInt % 3), 0, 0)).toISOString(),
@@ -33,7 +47,7 @@ function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericAc
       durationMinutes: 30 + ((userIdInt % 3) * 10),
     });
   }
-  if ((dayOfMonth + userIdInt + 2) % 5 === 0) {
+  if ((dayOfMonth + userIdInt + 2) % 5 === 0) { // Meeting pattern 2
      activities.push({
       type: 'teams_meeting',
       timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 14 + (userIdInt % 2), 30, 0)).toISOString(),
@@ -43,16 +57,22 @@ function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericAc
     });
   }
 
-  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2) + 1;
+  // Mock Jira tasks
+  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2); // 0 to 2 mock jira tasks
   for (let i = 0; i < numJiraTasks; i++) {
-    const isDone = (dayOfMonth + i + userIdInt) % 3 === 0;
+    const isDone = (dayOfMonth + i + userIdInt) % 4 === 0; // Some tasks are done
+    const isIndeterminate = (dayOfMonth + i + userIdInt) % 4 === 1;
     const taskType = (i + userIdInt) % 2 === 0 ? 'jira_issue_task' : 'jira_issue_bug';
+    let statusCategoryKey = 'new';
+    if (isDone) statusCategoryKey = 'done';
+    else if (isIndeterminate) statusCategoryKey = 'indeterminate';
+
     activities.push({
       type: taskType,
       timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 9 + i + (userIdInt % 4), 15 * i, 0)).toISOString(),
       details: `Mock Jira ${taskType.split('_').pop()} ${i+1} for user ID slice ${userId.substring(0,5)} on day ${dayOfMonth}`,
       source: 'jira',
-      jiraStatusCategoryKey: isDone ? 'done' : ((dayOfMonth + i) % 2 === 0 ? 'indeterminate' : 'new'),
+      jiraStatusCategoryKey: statusCategoryKey,
     });
   }
   return activities.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
@@ -68,7 +88,7 @@ function calculateMetricsFromMockActivities(activities: GenericActivityItem[], u
     }
     if (activity.source === 'jira' && activity.type.startsWith('jira_issue_')) {
       jiraTaskDetails.push({
-        key: `MOCK-${Math.random().toString(36).substring(2, 7)}`, 
+        key: `MOCK-${activity.details?.substring(0,10) || Math.random().toString(36).substring(2, 7)}`,
         summary: activity.details || "Mock Jira Task",
         status: activity.jiraStatusCategoryKey === 'done' ? 'Done' : activity.jiraStatusCategoryKey === 'indeterminate' ? 'In Progress' : 'To Do',
         type: activity.type.replace('jira_issue_', ''),
@@ -80,11 +100,21 @@ function calculateMetricsFromMockActivities(activities: GenericActivityItem[], u
   return {
     userId,
     totalMeetingMinutes,
-    averageResponseTimeMinutes: null, 
+    averageResponseTimeMinutes: null,
     meetingCount: activities.filter(a => a.type === 'teams_meeting').length,
     jiraTasksWorkedOnCount: jiraTaskDetails.length,
     jiraTaskDetails: jiraTaskDetails,
   };
+}
+
+interface DailyChartDataPoint {
+  date: string; // Formatted for chart axis e.g. "May 20"
+  isoDate: string; // Full ISO date string for reference
+  fragmentationScore: number | null;
+  meetingHours: number;
+  jiraCompleted: number;
+  jiraOngoing: number;
+  jiraPending: number;
 }
 
 
@@ -99,14 +129,18 @@ export default function UserActivityReportPage() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
     const today = new Date();
     return {
-      from: startOfDay(subDays(today, 6)), 
+      from: startOfDay(subDays(today, 6)),
       to: endOfDay(today),
     };
   });
   const [metrics, setMetrics] = useState<UserActivityMetrics | null>(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
-  const [dataSourceMsg, setDataSourceMsg] = useState<string | null>(null);
+  
+  const [dailyChartData, setDailyChartData] = useState<DailyChartDataPoint[]>([]);
+  const [isLoadingChartData, setIsLoadingChartData] = useState(false);
+  const [isLiveDataPeriodForGraphs, setIsLiveDataPeriodForGraphs] = useState(false);
+
 
   useEffect(() => {
     const fetchMsGraphUsers = async () => {
@@ -119,7 +153,7 @@ export default function UserActivityReportPage() {
           throw new Error(errorData.error || `Failed to fetch Microsoft Graph users: ${response.statusText}`);
         }
         const data: MicrosoftGraphUser[] = await response.json();
-        setAllMsGraphUsers(data.filter(u => u.id && u.displayName)); 
+        setAllMsGraphUsers(data.filter(u => u.id && u.displayName));
       } catch (err: any) {
         console.error("Error fetching MS Graph users:", err);
         setMsUsersError(err.message || "An unknown error occurred while fetching users.");
@@ -146,29 +180,63 @@ export default function UserActivityReportPage() {
     }
 
     setIsLoadingMetrics(true);
+    setIsLoadingChartData(true);
     setMetricsError(null);
     setMetrics(null);
-    setDataSourceMsg(null);
+    setDailyChartData([]);
 
-    const useMockData = isBefore(dateRange.to, LIVE_DATA_START_DATE);
+    const useMockDataForPeriod = isBefore(dateRange.to, LIVE_DATA_START_DATE);
+    setIsLiveDataPeriodForGraphs(!useMockDataForPeriod);
 
-    if (useMockData) {
-      setDataSourceMsg(`Metrics based on consistent mock activity patterns for this historical period (up to ${format(subDays(LIVE_DATA_START_DATE, 1), "PP")}).`);
+    if (useMockDataForPeriod) {
       console.log(`USER ACTIVITY REPORT: Using MOCK data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
       let aggregatedMockActivities: GenericActivityItem[] = [];
+      const newDailyChartData: DailyChartDataPoint[] = [];
       const daysInSelectedRange = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
 
       daysInSelectedRange.forEach(day => {
         const mockActivitiesForDay = getConsistentMockActivitiesForDay(selectedUser.id!, day);
         aggregatedMockActivities.push(...mockActivitiesForDay);
+
+        // Calculate daily metrics for charts
+        const scoreResult: CalculateFragmentationScoreOutput = calculateScoreAlgorithmically({
+            userId: selectedUser.id!,
+            activities: mockActivitiesForDay,
+            activityWindowDays: 1
+        });
+        
+        const dailyMeetingMinutes = mockActivitiesForDay
+            .filter(a => a.type === 'teams_meeting' && a.durationMinutes)
+            .reduce((sum, a) => sum + (a.durationMinutes || 0), 0);
+
+        let dailyJiraCompleted = 0;
+        let dailyJiraOngoing = 0;
+        let dailyJiraPending = 0;
+        mockActivitiesForDay.filter(a => a.source === 'jira').forEach(task => {
+            if (task.jiraStatusCategoryKey === 'done') dailyJiraCompleted++;
+            else if (task.jiraStatusCategoryKey === 'indeterminate') dailyJiraOngoing++;
+            else if (task.jiraStatusCategoryKey === 'new') dailyJiraPending++;
+            else dailyJiraOngoing++; // Default other non-done/new to ongoing
+        });
+        
+        newDailyChartData.push({
+            date: format(day, "MMM d"),
+            isoDate: day.toISOString(),
+            fragmentationScore: scoreResult.fragmentationScore,
+            meetingHours: parseFloat((dailyMeetingMinutes / 60).toFixed(1)),
+            jiraCompleted: dailyJiraCompleted,
+            jiraOngoing: dailyJiraOngoing,
+            jiraPending: dailyJiraPending,
+        });
       });
       
       const mockMetrics = calculateMetricsFromMockActivities(aggregatedMockActivities, selectedUser.id!);
       setMetrics(mockMetrics);
+      setDailyChartData(newDailyChartData.sort((a,b) => new Date(a.isoDate).getTime() - new Date(b.isoDate).getTime()));
       setIsLoadingMetrics(false);
+      setIsLoadingChartData(false);
 
     } else {
-      setDataSourceMsg(`Metrics based on live data from integrated APIs for this period (from ${format(LIVE_DATA_START_DATE, "PP")}).`);
       console.log(`USER ACTIVITY REPORT: Using LIVE data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
       try {
         const params = new URLSearchParams({
@@ -180,7 +248,7 @@ export default function UserActivityReportPage() {
         if (selectedUser.userPrincipalName) {
           params.append('userEmail', selectedUser.userPrincipalName);
         } else {
-          console.warn(`User ${selectedUser.displayName} (ID: ${selectedUser.id}) is missing userPrincipalName. Jira tasks might not be fetched or might be inaccurate.`);
+          console.warn(`User ${selectedUser.displayName} (ID: ${selectedUser.id}) is missing userPrincipalName. Jira tasks might not be fetched or might be inaccurate if live data is used for tasks.`);
         }
 
         const response = await fetch(`/api/user-activity-metrics?${params.toString()}`);
@@ -190,17 +258,20 @@ export default function UserActivityReportPage() {
           throw new Error(responseData.error || responseData.details || `Failed to fetch activity metrics: ${response.statusText}`);
         }
         setMetrics(responseData as UserActivityMetrics);
+        // For live data, daily chart breakdown is not available from current aggregated API
+        setDailyChartData([]); 
       } catch (err: any) {
         console.error("Error fetching user activity metrics:", err);
         setMetricsError(err.message || "An unknown error occurred while fetching metrics.");
       } finally {
         setIsLoadingMetrics(false);
+        setIsLoadingChartData(false);
       }
     }
   };
 
   const totalMeetingHours = metrics?.totalMeetingMinutes ? (metrics.totalMeetingMinutes / 60).toFixed(1) : "0.0";
-  const participatedDurationMinutes = metrics?.totalMeetingMinutes ? metrics.totalMeetingMinutes * 0.7 : 0; 
+  const participatedDurationMinutes = metrics?.totalMeetingMinutes ? metrics.totalMeetingMinutes * 0.7 : 0;
   const participatedDurationHours = (participatedDurationMinutes / 60).toFixed(1);
 
   const jiraTaskStatusCounts = useMemo(() => {
@@ -216,7 +287,7 @@ export default function UserActivityReportPage() {
           acc.ongoing++;
         } else if (statusKey === 'new') {
           acc.pending++;
-        } else if (statusKey !== '') { 
+        } else if (statusKey !== '') {
            acc.ongoing++;
         }
         return acc;
@@ -225,7 +296,6 @@ export default function UserActivityReportPage() {
     );
     return { ...counts, total: metrics.jiraTaskDetails.length };
   }, [metrics?.jiraTaskDetails]);
-
 
   return (
     <div className="space-y-6">
@@ -238,7 +308,9 @@ export default function UserActivityReportPage() {
                 User Activity Report
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Generate activity summaries for a specific user and time frame. Data for periods ending before {format(LIVE_DATA_START_DATE, "PP")} uses mock patterns.
+                Generate activity summaries for a specific user and time frame. 
+                For periods ending before {format(LIVE_DATA_START_DATE, "PP")}, metrics and daily charts are based on mock patterns. 
+                For later periods, metrics are live; daily charts for live data are not yet available.
               </CardDescription>
             </div>
           </div>
@@ -282,9 +354,9 @@ export default function UserActivityReportPage() {
                           onSelect={() => {
                             setSelectedUser(user);
                             setIsUserSelectOpen(false);
-                            setMetrics(null); 
+                            setMetrics(null);
                             setMetricsError(null);
-                            setDataSourceMsg(null);
+                            setDailyChartData([]);
                           }}
                         >
                           <CheckCircle
@@ -361,8 +433,8 @@ export default function UserActivityReportPage() {
           </div>
         </CardContent>
         <CardFooter>
-          <Button onClick={handleGenerateReport} disabled={isLoadingMetrics || isLoadingMsUsers || !selectedUser}>
-            {isLoadingMetrics ? (
+          <Button onClick={handleGenerateReport} disabled={isLoadingMetrics || isLoadingMsUsers || !selectedUser || isLoadingChartData}>
+            {isLoadingMetrics || isLoadingChartData ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
               <UserSearch className="mr-2 h-4 w-4" />
@@ -372,10 +444,10 @@ export default function UserActivityReportPage() {
         </CardFooter>
       </Card>
 
-      {isLoadingMetrics && (
+      {(isLoadingMetrics || isLoadingChartData) && (
         <div className="flex items-center justify-center p-8">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="ml-2 text-muted-foreground">Generating report...</p>
+          <p className="ml-2 text-muted-foreground">Generating report and charts...</p>
         </div>
       )}
       {metricsError && !isLoadingMetrics && (
@@ -409,17 +481,17 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
-                    <MessageSquareText className="h-5 w-5 text-orange-500" />
+                    <MessageSquareText className="h-5 w-5 text-purple-500" />
                     <span className="font-medium">Average Message Response Time:</span>
                 </div>
                 <span className="font-semibold text-sm text-muted-foreground">(Feature Coming Soon)</span>
             </div>
-            
-            {(metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0) || (metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && dataSourceMsg && dataSourceMsg.includes("live data")) ? (
-              <Accordion type="single" collapsible className="w-full">
-                <AccordionItem value="jira-task-details">
+
+            {(metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0) || (metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && !isLiveDataPeriodForGraphs) ? (
+              <Accordion type="single" collapsible className="w-full" defaultValue="jira-task-summary">
+                <AccordionItem value="jira-task-summary">
                    <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
                      <div className="flex items-center gap-1 text-left flex-wrap">
                         <ListChecksIcon className="h-5 w-5 text-blue-500 shrink-0 mr-1" />
@@ -445,16 +517,16 @@ export default function UserActivityReportPage() {
                         </ul>
                         </ScrollArea>
                     ) : (
-                        <p className="text-xs text-muted-foreground mt-2">No Jira tasks found for this user in this period.</p>
+                        <p className="text-xs text-muted-foreground mt-2">No Jira tasks found for this user in this period (based on mock data patterns or live data)..</p>
                     )}
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>
-            ) : metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && dataSourceMsg && dataSourceMsg.includes("mock") ? (
+            ) : metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && isLiveDataPeriodForGraphs ? (
                  <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                     <div className="flex items-center gap-2">
                         <ListChecksIcon className="h-5 w-5 text-blue-500" />
-                        <span className="font-medium">Jira Tasks Worked On (Mock Data):</span>
+                        <span className="font-medium">Jira Tasks Worked On (Live Data):</span>
                     </div>
                     <span className="font-semibold text-lg">{jiraTaskStatusCounts.total}</span>
                 </div>
@@ -470,6 +542,99 @@ export default function UserActivityReportPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Charts Section */}
+      {!isLoadingChartData && dailyChartData.length > 0 && !isLiveDataPeriodForGraphs && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+          <Card className="shadow-md">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <LineChartIcon className="h-5 w-5 text-destructive" />
+                <CardTitle className="text-md font-semibold">Daily Stress Load (Fragmentation)</CardTitle>
+              </div>
+              <CardDescription>Based on mock daily activity patterns.</CardDescription>
+            </CardHeader>
+            <CardContent className="h-[250px]">
+              <ChartContainer config={{ score: { label: "Score", color: "hsl(var(--destructive))" } }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={dailyChartData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" style={{ fontSize: '10px' }} />
+                    <YAxis domain={[0, 5]} allowDataOverflow={true} style={{ fontSize: '10px' }} tickFormatter={(val) => val.toFixed(1)} />
+                    <Tooltip content={<ChartTooltipContent indicator="line" />} />
+                    <Line type="monotone" dataKey="fragmentationScore" stroke="var(--color-score)" strokeWidth={2} dot={{ r: 3 }} name="Score" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-md">
+            <CardHeader>
+                <div className="flex items-center gap-2">
+                    <BarChart2 className="h-5 w-5 text-primary" />
+                    <CardTitle className="text-md font-semibold">Daily Meeting Hours</CardTitle>
+                </div>
+              <CardDescription>Based on mock daily activity patterns.</CardDescription>
+            </CardHeader>
+            <CardContent className="h-[250px]">
+              <ChartContainer config={{ hours: { label: "Hours", color: "hsl(var(--primary))" } }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={dailyChartData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" style={{ fontSize: '10px' }} />
+                    <YAxis style={{ fontSize: '10px' }} />
+                    <Tooltip content={<ChartTooltipContent indicator="line" />} />
+                    <Bar dataKey="meetingHours" fill="var(--color-hours)" radius={[4, 4, 0, 0]} name="Meeting Hours" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-md">
+            <CardHeader>
+                <div className="flex items-center gap-2">
+                    <ListFilter className="h-5 w-5 text-blue-500" />
+                    <CardTitle className="text-md font-semibold">Daily Jira Tasks by Status</CardTitle>
+                </div>
+              <CardDescription>Based on mock daily activity patterns.</CardDescription>
+            </CardHeader>
+            <CardContent className="h-[250px]">
+              <ChartContainer config={{ 
+                  completed: { label: "Completed", color: "hsl(var(--chart-2))" }, // Green
+                  ongoing: { label: "Ongoing", color: "hsl(var(--chart-4))" },   // Yellow
+                  pending: { label: "Pending", color: "hsl(var(--chart-5))" }    // Red
+                }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={dailyChartData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" style={{ fontSize: '10px' }} />
+                    <YAxis style={{ fontSize: '10px' }} allowDecimals={false} />
+                    <Tooltip content={<ChartTooltipContent indicator="line" />} />
+                    <Legend wrapperStyle={{ fontSize: '10px' }} />
+                    <Bar dataKey="jiraCompleted" stackId="a" fill="var(--color-completed)" radius={[4, 4, 0, 0]} name="Completed" />
+                    <Bar dataKey="jiraOngoing" stackId="a" fill="var(--color-ongoing)" radius={[0,0,0,0]} name="Ongoing" />
+                    <Bar dataKey="jiraPending" stackId="a" fill="var(--color-pending)" radius={[0,0,0,0]} name="Pending" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartContainer>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+      {!isLoadingChartData && isLiveDataPeriodForGraphs && (
+        <Alert className="mt-6">
+          <BarChartHorizontalBig className="h-4 w-4" />
+          <AlertTitle>Daily Charts for Live Data</AlertTitle>
+          <AlertDescription>
+            Daily trend charts for live data periods are not yet available. 
+            The current API provides aggregated metrics for the entire selected live range.
+            Future enhancements could include daily breakdowns for live data.
+          </AlertDescription>
+        </Alert>
+      )}
+
     </div>
   );
 }
