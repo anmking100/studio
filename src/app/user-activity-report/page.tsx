@@ -5,7 +5,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info, CheckCircle, ListChecksIcon, ChevronDown, FileQuestion, Hourglass } from "lucide-react";
+import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, CheckCircle, ListChecksIcon, ChevronDown, FileQuestion, Hourglass } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Calendar } from "@/components/ui/calendar";
@@ -120,8 +120,7 @@ export default function UserActivityReportPage() {
         } else if (task.statusCategoryKey === 'new') {
           acc.pending++;
         } else {
-           // Fallback for other unknown statuses, count as ongoing
-           acc.ongoing++;
+           acc.ongoing++; // Fallback for other statuses
         }
         return acc;
       },
@@ -315,11 +314,11 @@ export default function UserActivityReportPage() {
             {metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0 && (
               <Accordion type="single" collapsible className="w-full">
                 <AccordionItem value="jira-task-details">
-                  <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40">
-                    <div className="flex items-center gap-2 text-left flex-wrap">
-                        <ListChecksIcon className="h-5 w-5 text-blue-500 shrink-0" />
+                   <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
+                     <div className="flex items-center gap-1 text-left flex-wrap">
+                        <ListChecksIcon className="h-5 w-5 text-blue-500 shrink-0 mr-1" />
                         <span className="font-semibold">Jira Tasks:</span>
-                        <span className="text-xs"> (Total: {jiraTaskStatusCounts.total} |</span>
+                        <span className="text-xs">(Total: {jiraTaskStatusCounts.total} |</span>
                         <span className="text-xs flex items-center"><CheckCircle className="h-3.5 w-3.5 mr-1 text-green-600 shrink-0"/>Completed: {jiraTaskStatusCounts.completed} |</span>
                         <span className="text-xs flex items-center"><Hourglass className="h-3.5 w-3.5 mr-1 text-yellow-600 shrink-0"/>Ongoing: {jiraTaskStatusCounts.ongoing} |</span>
                         <span className="text-xs flex items-center"><FileQuestion className="h-3.5 w-3.5 mr-1 text-red-500 shrink-0"/>Pending: {jiraTaskStatusCounts.pending})</span>
@@ -351,17 +350,6 @@ export default function UserActivityReportPage() {
                     <span className="font-semibold text-lg">0</span>
                 </div>
             )}
-
-
-            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
-                <div className="flex items-center gap-2">
-                    <Info className="h-5 w-5 text-yellow-500" />
-                    <span className="font-medium">Average Message Response Time:</span>
-                </div>
-                <span className="font-semibold text-lg text-muted-foreground">
-                    {metrics.averageResponseTimeMinutes !== null ? `${metrics.averageResponseTimeMinutes.toFixed(1)} minutes` : "(Feature Coming Soon)"}
-                </span>
-            </div>
             {metrics.error && (
                  <Alert variant="destructive" className="mt-2">
                     <AlertTriangle className="h-4 w-4" />
