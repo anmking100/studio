@@ -13,9 +13,10 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import type { DateRange } from "react-day-picker";
 import { format, startOfDay, subDays, endOfDay, parseISO, eachDayOfInterval, isBefore, addHours, isAfter } from "date-fns";
 import { cn } from "@/lib/utils";
-import type { UserActivityMetrics, MicrosoftGraphUser, JiraTaskDetail, GenericActivityItem } from "@/lib/types";
+import type { UserActivityMetrics, MicrosoftGraphUser, JiraTaskDetail, GenericActivityItem, CalculateFragmentationScoreInputType, CalculateFragmentationScoreOutput } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { calculateScoreAlgorithmically, type CalculateFragmentationScoreOutput } from "@/lib/score-calculator";
+import { calculateScoreAlgorithmically } from "@/lib/score-calculator";
+import { Label } from "@/components/ui/label"; // Added Label import
 import {
   ResponsiveContainer,
   LineChart,
@@ -32,11 +33,13 @@ import { ChartContainer, ChartTooltipContent, type ChartConfig } from "@/compone
 
 const LIVE_DATA_START_DATE = startOfDay(new Date('2025-05-22T00:00:00.000Z'));
 
+// Helper to generate consistent mock activities for a given user and day (copied from TeamOverviewPage)
 function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericActivityItem[] {
   const activities: GenericActivityItem[] = [];
-  const dayOfMonth = day.getUTCDate(); 
+  const dayOfMonth = day.getUTCDate();
   const userIdInt = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
 
+  // Mock meetings - pattern based on day and userIdInt
   if ((dayOfMonth + userIdInt) % 4 === 1) {
     activities.push({
       type: 'teams_meeting',
@@ -56,7 +59,8 @@ function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericAc
     });
   }
 
-  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2) + 1;
+  // Mock Jira tasks
+  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2) + 1; // 1 to 3 mock jira tasks
   for (let i = 0; i < numJiraTasks; i++) {
     const isDone = (dayOfMonth + i + userIdInt) % 3 === 0;
     const taskType = (i + userIdInt) % 2 === 0 ? 'jira_issue_task' : 'jira_issue_bug';
@@ -71,6 +75,7 @@ function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericAc
   return activities.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
+// Helper to calculate metrics from mock activities
 function calculateMetricsFromMockActivities(activities: GenericActivityItem[], userId: string): UserActivityMetrics {
   let totalMeetingMinutes = 0;
   const jiraTaskDetails: JiraTaskDetail[] = [];
@@ -201,11 +206,12 @@ export default function UserActivityReportPage() {
         const mockActivitiesForDay = getConsistentMockActivitiesForDay(selectedUser.id!, day);
         aggregatedMockActivitiesForRange.push(...mockActivitiesForDay);
 
-        const scoreResult: CalculateFragmentationScoreOutput = calculateScoreAlgorithmically({
+        const scoreInput: CalculateFragmentationScoreInputType = {
             userId: selectedUser.id!,
             activities: mockActivitiesForDay,
             activityWindowDays: 1
-        });
+        };
+        const scoreResult: CalculateFragmentationScoreOutput = calculateScoreAlgorithmically(scoreInput);
         
         const dailyMeetingMinutes = mockActivitiesForDay
             .filter(a => a.type === 'teams_meeting' && a.durationMinutes)
@@ -219,7 +225,7 @@ export default function UserActivityReportPage() {
             if (task.jiraStatusCategoryKey === 'done') dailyJiraCompleted++;
             else if (task.jiraStatusCategoryKey === 'indeterminate') dailyJiraOngoing++;
             else if (task.jiraStatusCategoryKey === 'new') dailyJiraPending++;
-            else dailyJiraOngoing++; 
+            else dailyJiraOngoing++; // Default to ongoing if category key is something else
         });
         
         newDailyChartDataPoints.push({
@@ -292,7 +298,7 @@ export default function UserActivityReportPage() {
           acc.ongoing++;
         } else if (statusKey === 'new') {
           acc.pending++;
-        } else if (statusKey !== '') {
+        } else if (statusKey !== '') { // Count any other non-empty status as ongoing for this breakdown
            acc.ongoing++;
         }
         return acc;
@@ -317,8 +323,7 @@ export default function UserActivityReportPage() {
                 User Activity Report
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Generate activity summaries for a specific user and time frame.
-                For periods ending before {format(LIVE_DATA_START_DATE, "PP")}, metrics and daily charts are based on mock patterns.
+                Generate activity summaries. Metrics based on mock patterns for dates before {format(LIVE_DATA_START_DATE, "PP")}.
               </CardDescription>
             </div>
           </div>
@@ -489,44 +494,45 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <MessageSquareText className="h-5 w-5 text-purple-500" />
                     <span className="font-medium">Average Message Response Time:</span>
                 </div>
                 <span className="font-semibold text-sm text-muted-foreground">(Feature Coming Soon)</span>
             </div>
-            
-            {(metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0) ? (
-              <Accordion type="single" collapsible className="w-full" defaultValue="jira-task-summary">
-                <AccordionItem value="jira-task-summary">
-                   <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
-                     <div className="flex items-center gap-1 text-left flex-wrap">
-                        <ListChecksIcon className="h-5 w-5 text-blue-500 shrink-0 mr-1" />
-                        <span className="font-semibold">Jira Tasks:</span>
-                        <span className="text-xs">(Total: {jiraTaskStatusCounts.total} |</span>
-                        <span className="text-xs flex items-center"><CheckCircle className="h-3.5 w-3.5 mr-1 text-green-600 shrink-0"/>Completed: {jiraTaskStatusCounts.completed} |</span>
-                        <span className="text-xs flex items-center"><Hourglass className="h-3.5 w-3.5 mr-1 text-yellow-600 shrink-0"/>Ongoing: {jiraTaskStatusCounts.ongoing} |</span>
-                        <span className="text-xs flex items-center"><FileQuestion className="h-3.5 w-3.5 mr-1 text-red-500 shrink-0"/>Pending: {jiraTaskStatusCounts.pending})</span>
-                        <ChevronDown className="h-5 w-5 text-blue-500 transition-transform duration-200 group-data-[state=open]:rotate-180 ml-auto shrink-0" />
-                    </div>
-                  </AccordionTrigger>
-                  <AccordionContent className="pt-1 pb-3 px-3 border rounded-b-md border-t-0">
-                        <ScrollArea className="h-[200px] mt-2">
-                        <ul className="space-y-2">
-                            {metrics.jiraTaskDetails.map((task) => (
-                            <li key={task.key} className="text-xs border-b pb-1">
-                                <p><strong>Key:</strong> {task.key} ({task.type})</p>
-                                <p><strong>Summary:</strong> {task.summary}</p>
-                                <p><strong>Status:</strong> {task.status} (Category: {task.statusCategoryKey || 'N/A'})</p>
-                            </li>
-                            ))}
-                        </ul>
-                        </ScrollArea>
-                  </AccordionContent>
-                </AccordionItem>
-              </Accordion>
-            ) : metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 ? (
+
+            {(metrics.jiraTaskDetails) ? (
+              (metrics.jiraTaskDetails.length > 0) ? (
+                <Accordion type="single" collapsible className="w-full" defaultValue="jira-task-summary">
+                  <AccordionItem value="jira-task-summary">
+                    <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
+                      <div className="flex items-center gap-1 text-left flex-wrap">
+                          <ListChecksIcon className="h-5 w-5 text-blue-500 shrink-0 mr-1" />
+                          <span className="font-semibold">Jira Tasks:</span>
+                          <span className="text-xs">(Total: {jiraTaskStatusCounts.total} |</span>
+                          <span className="text-xs flex items-center"><CheckCircle className="h-3.5 w-3.5 mr-1 text-green-600 shrink-0"/>Completed: {jiraTaskStatusCounts.completed} |</span>
+                          <span className="text-xs flex items-center"><Hourglass className="h-3.5 w-3.5 mr-1 text-yellow-600 shrink-0"/>Ongoing: {jiraTaskStatusCounts.ongoing} |</span>
+                          <span className="text-xs flex items-center"><FileQuestion className="h-3.5 w-3.5 mr-1 text-red-500 shrink-0"/>Pending: {jiraTaskStatusCounts.pending})</span>
+                          <ChevronDown className="h-5 w-5 text-blue-500 transition-transform duration-200 group-data-[state=open]:rotate-180 ml-auto shrink-0" />
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="pt-1 pb-3 px-3 border rounded-b-md border-t-0">
+                          <ScrollArea className="h-[200px] mt-2">
+                          <ul className="space-y-2">
+                              {metrics.jiraTaskDetails.map((task) => (
+                              <li key={task.key} className="text-xs border-b pb-1">
+                                  <p><strong>Key:</strong> {task.key} ({task.type})</p>
+                                  <p><strong>Summary:</strong> {task.summary}</p>
+                                  <p><strong>Status:</strong> {task.status} (Category: {task.statusCategoryKey || 'N/A'})</p>
+                              </li>
+                              ))}
+                          </ul>
+                          </ScrollArea>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+              ) : (
                  <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                     <div className="flex items-center gap-2">
                         <ListChecksIcon className="h-5 w-5 text-blue-500" />
@@ -534,6 +540,7 @@ export default function UserActivityReportPage() {
                     </div>
                     <span className="font-semibold text-lg">0</span>
                 </div>
+              )
             ) : null}
             
             {metrics.error && (
