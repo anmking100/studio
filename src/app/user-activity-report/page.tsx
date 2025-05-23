@@ -11,12 +11,13 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Calendar } from "@/components/ui/calendar";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import type { DateRange } from "react-day-picker";
-import { format, startOfDay, subDays, endOfDay, parseISO, eachDayOfInterval, isBefore, addHours, isAfter, differenceInMinutes } from "date-fns";
+import { format, startOfDay, subDays, endOfDay, parseISO, eachDayOfInterval, isBefore } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { UserActivityMetrics, MicrosoftGraphUser, JiraTaskDetail, GenericActivityItem, CalculateFragmentationScoreInputType, CalculateFragmentationScoreOutput } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { calculateScoreAlgorithmically } from "@/lib/score-calculator";
 import { Label } from "@/components/ui/label";
+import { getConsistentMockActivitiesForDay } from "@/lib/mock-activity-generator";
 import {
   ResponsiveContainer,
   LineChart,
@@ -31,53 +32,14 @@ import {
 } from "recharts";
 import { ChartContainer, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 
+
 const LIVE_DATA_START_DATE = startOfDay(new Date('2025-05-22T00:00:00.000Z'));
-
-// Helper to generate consistent mock activities for a given user and day
-function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericActivityItem[] {
-  const activities: GenericActivityItem[] = [];
-  const dayOfMonth = day.getUTCDate();
-  const userIdInt = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-
-  if ((dayOfMonth + userIdInt) % 4 === 1) {
-    activities.push({
-      type: 'teams_meeting',
-      timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 10 + (userIdInt % 3), 0, 0)).toISOString(),
-      details: `Mock Sync Meeting for user ID slice ${userId.substring(0,5)} on day ${dayOfMonth}`,
-      source: 'm365',
-      durationMinutes: 30 + ((userIdInt % 3) * 10),
-    });
-  }
-  if ((dayOfMonth + userIdInt + 2) % 5 === 0) {
-     activities.push({
-      type: 'teams_meeting',
-      timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 14 + (userIdInt % 2), 30, 0)).toISOString(),
-      details: `Afternoon Mock Huddle for user ID slice ${userId.substring(0,5)}`,
-      source: 'm365',
-      durationMinutes: 20 + ((userIdInt % 2) * 5),
-    });
-  }
-
-  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2) + 1;
-  for (let i = 0; i < numJiraTasks; i++) {
-    const isDone = (dayOfMonth + i + userIdInt) % 3 === 0;
-    const taskType = (i + userIdInt) % 2 === 0 ? 'jira_issue_task' : 'jira_issue_bug';
-    activities.push({
-      type: taskType,
-      timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 9 + i + (userIdInt % 4), 15 * i, 0)).toISOString(),
-      details: `Mock Jira ${taskType.split('_').pop()} ${i+1} for user ID slice ${userId.substring(0,5)} on day ${dayOfMonth}`,
-      source: 'jira',
-      jiraStatusCategoryKey: isDone ? 'done' : ((dayOfMonth + i) % 2 === 0 ? 'indeterminate' : 'new'),
-    });
-  }
-  return activities.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-}
 
 // Helper to calculate metrics from mock activities
 function calculateMetricsFromMockActivities(activities: GenericActivityItem[], userId: string): UserActivityMetrics {
   let totalMeetingMinutes = 0;
   const jiraTaskDetails: JiraTaskDetail[] = [];
-  let jiraActivityIndex = 0; // For unique key generation
+  let jiraActivityIndex = 0; 
 
   activities.forEach(activity => {
     if (activity.type === 'teams_meeting' && activity.durationMinutes) {
@@ -85,7 +47,7 @@ function calculateMetricsFromMockActivities(activities: GenericActivityItem[], u
     }
     if (activity.source === 'jira' && activity.type.startsWith('jira_issue_')) {
       const detail: JiraTaskDetail = {
-        key: `MOCK-${activity.details?.substring(0,10) || 'task'}-${jiraActivityIndex++}`, // Ensure unique key
+        key: `MOCK-${activity.details?.substring(0,10) || Math.random().toString(36).substring(2, 7)}-${jiraActivityIndex++}`,
         summary: activity.details || "Mock Jira Task",
         status: activity.jiraStatusCategoryKey === 'done' ? 'Done' : activity.jiraStatusCategoryKey === 'indeterminate' ? 'In Progress' : 'To Do',
         type: activity.type.replace('jira_issue_', ''),
@@ -125,9 +87,9 @@ const meetingHoursChartConfig = {
 } satisfies ChartConfig;
 
 const jiraTasksChartConfig = {
-  completed: { label: "Completed", color: "hsl(var(--chart-2))" }, // Green
-  ongoing: { label: "Ongoing", color: "hsl(var(--chart-4))" },   // Yellow/Orange
-  pending: { label: "Pending", color: "hsl(var(--chart-5))" },   // Red/Blue
+  completed: { label: "Completed", color: "hsl(var(--chart-2))" }, 
+  ongoing: { label: "Ongoing", color: "hsl(var(--chart-4))" },   
+  pending: { label: "Pending", color: "hsl(var(--chart-5))" },   
 } satisfies ChartConfig;
 
 
@@ -324,7 +286,7 @@ export default function UserActivityReportPage() {
                 User Activity Report
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Metrics based on mock patterns for dates before {format(LIVE_DATA_START_DATE, "PP")}. Live data otherwise.
+                Metrics for periods ending before {format(LIVE_DATA_START_DATE, "PP")} use consistent mock patterns. Live data otherwise.
               </CardDescription>
             </div>
           </div>
@@ -495,7 +457,7 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <MessageSquareText className="h-5 w-5 text-purple-500" />
                     <span className="font-medium">Average Message Response Time:</span>
@@ -504,25 +466,25 @@ export default function UserActivityReportPage() {
             </div>
             
             {(metrics.jiraTaskDetails) ? (
-                (metrics.jiraTaskDetails.length > 0) ? (
+                (metrics.jiraTaskDetails.length > 0 || (jiraTaskStatusCounts.total > 0 && useMockDataForPeriod) ) ? ( // Ensure accordion shows if mock data has counts
                     <Accordion type="single" collapsible className="w-full" defaultValue="jira-task-summary">
                     <AccordionItem value="jira-task-summary">
                         <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
-                            <div className="flex items-center gap-1 text-left flex-wrap">
+                            <div className="flex items-center gap-1 text-left flex-wrap w-full">
                                 <ListChecksIcon className="h-5 w-5 text-blue-500 shrink-0 mr-1" />
-                                <span className="font-semibold">Jira Tasks:</span>
-                                <span className="text-xs">(Total: {jiraTaskStatusCounts.total} |</span>
-                                <span className="text-xs flex items-center"><CheckCircle className="h-3.5 w-3.5 mr-1 text-green-600 shrink-0"/>Completed: {jiraTaskStatusCounts.completed} |</span>
-                                <span className="text-xs flex items-center"><Hourglass className="h-3.5 w-3.5 mr-1 text-yellow-600 shrink-0"/>Ongoing: {jiraTaskStatusCounts.ongoing} |</span>
-                                <span className="text-xs flex items-center"><FileQuestion className="h-3.5 w-3.5 mr-1 text-red-500 shrink-0"/>Pending: {jiraTaskStatusCounts.pending})</span>
+                                <span className="font-semibold mr-1">Jira Tasks:</span>
+                                <span className="text-xs flex items-center mr-1">(Total: {jiraTaskStatusCounts.total} |</span>
+                                <span className="text-xs flex items-center mr-1"><CheckCircle className="h-3.5 w-3.5 mr-0.5 text-green-600 shrink-0"/>Completed: {jiraTaskStatusCounts.completed} |</span>
+                                <span className="text-xs flex items-center mr-1"><Hourglass className="h-3.5 w-3.5 mr-0.5 text-yellow-600 shrink-0"/>Ongoing: {jiraTaskStatusCounts.ongoing} |</span>
+                                <span className="text-xs flex items-center"><FileQuestion className="h-3.5 w-3.5 mr-0.5 text-red-500 shrink-0"/>Pending: {jiraTaskStatusCounts.pending})</span>
                                 <ChevronDown className="h-5 w-5 text-blue-500 transition-transform duration-200 group-data-[state=open]:rotate-180 ml-auto shrink-0" />
                             </div>
                         </AccordionTrigger>
                         <AccordionContent className="pt-1 pb-3 px-3 border rounded-b-md border-t-0">
                               <ScrollArea className="h-[200px] mt-2">
                               <ul className="space-y-2">
-                                  {metrics.jiraTaskDetails.map((task) => (
-                                  <li key={task.key} className="text-xs border-b pb-1">
+                                  {metrics.jiraTaskDetails.map((task, index) => (
+                                  <li key={task.key || `mock-task-${index}`} className="text-xs border-b pb-1">
                                       <p><strong>Key:</strong> {task.key} ({task.type})</p>
                                       <p><strong>Summary:</strong> {task.summary}</p>
                                       <p><strong>Status:</strong> {task.status} (Category: {task.statusCategoryKey || 'N/A'})</p>
@@ -537,10 +499,10 @@ export default function UserActivityReportPage() {
                     <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                         <div className="flex items-center gap-2">
                             <ListChecksIcon className="h-5 w-5 text-blue-500" />
-                            <span className="font-medium">Jira Tasks Worked On:</span>
+                             <span className="font-medium">Jira Tasks Worked On:</span>
                         </div>
-                        <span className="font-semibold text-lg">
-                            {isLiveDataPeriodForGraphs ? "0 (Live data, details from API)" : "0 (No mock Jira tasks for this period)"}
+                         <span className="font-semibold text-lg">
+                           {isLiveDataPeriodForGraphs ? "0" : "0 (No mock Jira tasks for this period)"}
                         </span>
                     </div>
                 )
