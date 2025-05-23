@@ -11,10 +11,81 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Calendar } from "@/components/ui/calendar";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import type { DateRange } from "react-day-picker";
-import { format, startOfDay, subDays, endOfDay } from "date-fns";
+import { format, startOfDay, subDays, endOfDay, parseISO, eachDayOfInterval, isBefore } from "date-fns";
 import { cn } from "@/lib/utils";
-import type { UserActivityMetrics, MicrosoftGraphUser, JiraTaskDetail } from "@/lib/types";
+import type { UserActivityMetrics, MicrosoftGraphUser, JiraTaskDetail, GenericActivityItem } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
+
+const LIVE_DATA_START_DATE = startOfDay(new Date('2025-05-22T00:00:00.000Z'));
+
+// Helper to generate consistent mock activities for a given user and day (copied from team-overview)
+function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericActivityItem[] {
+  const activities: GenericActivityItem[] = [];
+  const dayOfMonth = day.getUTCDate();
+  const userIdInt = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+
+  if ((dayOfMonth + userIdInt) % 4 === 1) {
+    activities.push({
+      type: 'teams_meeting',
+      timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 10 + (userIdInt % 3), 0, 0)).toISOString(),
+      details: `Mock Sync Meeting for user ID slice ${userId.substring(0,5)} on day ${dayOfMonth}`,
+      source: 'm365',
+      durationMinutes: 30 + ((userIdInt % 3) * 10),
+    });
+  }
+  if ((dayOfMonth + userIdInt + 2) % 5 === 0) {
+     activities.push({
+      type: 'teams_meeting',
+      timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 14 + (userIdInt % 2), 30, 0)).toISOString(),
+      details: `Afternoon Mock Huddle for user ID slice ${userId.substring(0,5)}`,
+      source: 'm365',
+      durationMinutes: 20 + ((userIdInt % 2) * 5),
+    });
+  }
+
+  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2) + 1;
+  for (let i = 0; i < numJiraTasks; i++) {
+    const isDone = (dayOfMonth + i + userIdInt) % 3 === 0;
+    const taskType = (i + userIdInt) % 2 === 0 ? 'jira_issue_task' : 'jira_issue_bug';
+    activities.push({
+      type: taskType,
+      timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 9 + i + (userIdInt % 4), 15 * i, 0)).toISOString(),
+      details: `Mock Jira ${taskType.split('_').pop()} ${i+1} for user ID slice ${userId.substring(0,5)} on day ${dayOfMonth}`,
+      source: 'jira',
+      jiraStatusCategoryKey: isDone ? 'done' : ((dayOfMonth + i) % 2 === 0 ? 'indeterminate' : 'new'),
+    });
+  }
+  return activities.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+
+function calculateMetricsFromMockActivities(activities: GenericActivityItem[]): UserActivityMetrics {
+  let totalMeetingMinutes = 0;
+  const jiraTaskDetails: JiraTaskDetail[] = [];
+
+  activities.forEach(activity => {
+    if (activity.type === 'teams_meeting' && activity.durationMinutes) {
+      totalMeetingMinutes += activity.durationMinutes;
+    }
+    if (activity.source === 'jira' && activity.type.startsWith('jira_issue_')) {
+      jiraTaskDetails.push({
+        key: `MOCK-${Math.random().toString(36).substring(2, 7)}`, // Mock key
+        summary: activity.details || "Mock Jira Task",
+        status: activity.jiraStatusCategoryKey === 'done' ? 'Done' : activity.jiraStatusCategoryKey === 'indeterminate' ? 'In Progress' : 'To Do',
+        type: activity.type.replace('jira_issue_', ''),
+        statusCategoryKey: activity.jiraStatusCategoryKey,
+      });
+    }
+  });
+
+  return {
+    userId: "mockUser", // Placeholder as this is aggregated mock data
+    totalMeetingMinutes,
+    averageResponseTimeMinutes: null, // Still placeholder
+    meetingCount: activities.filter(a => a.type === 'teams_meeting').length,
+    jiraTasksWorkedOnCount: jiraTaskDetails.length,
+    jiraTaskDetails: jiraTaskDetails,
+  };
+}
 
 
 export default function UserActivityReportPage() {
@@ -35,6 +106,7 @@ export default function UserActivityReportPage() {
   const [metrics, setMetrics] = useState<UserActivityMetrics | null>(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [dataSourceMsg, setDataSourceMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchMsGraphUsers = async () => {
@@ -76,37 +148,60 @@ export default function UserActivityReportPage() {
     setIsLoadingMetrics(true);
     setMetricsError(null);
     setMetrics(null);
+    setDataSourceMsg(null);
 
-    try {
-      const params = new URLSearchParams({
-        userId: selectedUser.id,
-        startDate: dateRange.from.toISOString(),
-        endDate: dateRange.to.toISOString(),
+    const useMockData = isBefore(dateRange.to, LIVE_DATA_START_DATE);
+
+    if (useMockData) {
+      setDataSourceMsg("Metrics based on consistent mock activity patterns for this historical period.");
+      console.log(`USER ACTIVITY REPORT: Using MOCK data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
+      let aggregatedMockActivities: GenericActivityItem[] = [];
+      const daysInSelectedRange = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
+
+      daysInSelectedRange.forEach(day => {
+        const mockActivitiesForDay = getConsistentMockActivitiesForDay(selectedUser.id!, day);
+        aggregatedMockActivities.push(...mockActivitiesForDay);
       });
       
-      if (selectedUser.userPrincipalName) {
-        params.append('userEmail', selectedUser.userPrincipalName);
-      } else {
-        console.warn(`User ${selectedUser.displayName} (ID: ${selectedUser.id}) is missing userPrincipalName. Jira tasks might not be fetched or might be inaccurate.`);
-      }
-
-      const response = await fetch(`/api/user-activity-metrics?${params.toString()}`);
-      const responseData = await response.json();
-
-      if (!response.ok) {
-        throw new Error(responseData.error || responseData.details || `Failed to fetch activity metrics: ${response.statusText}`);
-      }
-      setMetrics(responseData as UserActivityMetrics);
-    } catch (err: any) {
-      console.error("Error fetching user activity metrics:", err);
-      setMetricsError(err.message || "An unknown error occurred while fetching metrics.");
-    } finally {
+      const mockMetrics = calculateMetricsFromMockActivities(aggregatedMockActivities);
+      mockMetrics.userId = selectedUser.id; // Set the correct userId
+      setMetrics(mockMetrics);
       setIsLoadingMetrics(false);
+
+    } else {
+      setDataSourceMsg("Metrics based on live data from integrated APIs for this period.");
+      console.log(`USER ACTIVITY REPORT: Using LIVE data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
+      try {
+        const params = new URLSearchParams({
+          userId: selectedUser.id,
+          startDate: dateRange.from.toISOString(),
+          endDate: dateRange.to.toISOString(),
+        });
+        
+        if (selectedUser.userPrincipalName) {
+          params.append('userEmail', selectedUser.userPrincipalName);
+        } else {
+          console.warn(`User ${selectedUser.displayName} (ID: ${selectedUser.id}) is missing userPrincipalName. Jira tasks might not be fetched or might be inaccurate.`);
+        }
+
+        const response = await fetch(`/api/user-activity-metrics?${params.toString()}`);
+        const responseData = await response.json();
+
+        if (!response.ok) {
+          throw new Error(responseData.error || responseData.details || `Failed to fetch activity metrics: ${response.statusText}`);
+        }
+        setMetrics(responseData as UserActivityMetrics);
+      } catch (err: any) {
+        console.error("Error fetching user activity metrics:", err);
+        setMetricsError(err.message || "An unknown error occurred while fetching metrics.");
+      } finally {
+        setIsLoadingMetrics(false);
+      }
     }
   };
 
   const totalMeetingHours = metrics?.totalMeetingMinutes ? (metrics.totalMeetingMinutes / 60).toFixed(1) : "0.0";
-  const participatedDurationMinutes = metrics?.totalMeetingMinutes ? metrics.totalMeetingMinutes * 0.7 : 0;
+  const participatedDurationMinutes = metrics?.totalMeetingMinutes ? metrics.totalMeetingMinutes * 0.7 : 0; // This is still 70%
   const participatedDurationHours = (participatedDurationMinutes / 60).toFixed(1);
 
   const jiraTaskStatusCounts = useMemo(() => {
@@ -122,7 +217,7 @@ export default function UserActivityReportPage() {
           acc.ongoing++;
         } else if (statusKey === 'new') {
           acc.pending++;
-        } else if (statusKey !== '') { // Count other non-empty status keys as ongoing if not explicitly done/new
+        } else if (statusKey !== '') { 
            acc.ongoing++;
         }
         return acc;
@@ -144,7 +239,7 @@ export default function UserActivityReportPage() {
                 User Activity Report
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Generate activity summaries for a specific user and time frame.
+                Generate activity summaries for a specific user and time frame. Data before {format(LIVE_DATA_START_DATE, "PP")} uses mock patterns.
               </CardDescription>
             </div>
           </div>
@@ -190,6 +285,7 @@ export default function UserActivityReportPage() {
                             setIsUserSelectOpen(false);
                             setMetrics(null); 
                             setMetricsError(null);
+                            setDataSourceMsg(null);
                           }}
                         >
                           <CheckCircle
@@ -290,6 +386,15 @@ export default function UserActivityReportPage() {
           <AlertDescription>{metricsError}</AlertDescription>
         </Alert>
       )}
+      {dataSourceMsg && !isLoadingMetrics && !metricsError && (
+        <Alert variant="default" className="border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400 shadow-sm">
+            <BarChartHorizontalBig className="h-5 w-5 text-blue-600 dark:text-blue-500" />
+            <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Data Source Note</AlertTitle>
+            <AlertDescription className="text-blue-600 dark:text-blue-500">
+                {dataSourceMsg}
+            </AlertDescription>
+        </Alert>
+      )}
       {metrics && !isLoadingMetrics && (
         <Card>
           <CardHeader>
@@ -321,7 +426,7 @@ export default function UserActivityReportPage() {
                 <span className="font-semibold text-sm text-muted-foreground">(Feature Coming Soon)</span>
             </div>
             
-            {metrics.jiraTaskDetails && (
+            {(metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0) || (metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && dataSourceMsg?.includes("live data")) ? ( // Show accordion if live and 0, or if tasks exist
               <Accordion type="single" collapsible className="w-full">
                 <AccordionItem value="jira-task-details">
                    <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
@@ -349,27 +454,26 @@ export default function UserActivityReportPage() {
                         </ul>
                         </ScrollArea>
                     ) : (
-                        <p className="text-xs text-muted-foreground mt-2">No Jira tasks found for this period.</p>
+                        <p className="text-xs text-muted-foreground mt-2">No Jira tasks found for this user in this period.</p>
                     )}
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>
-            )}
-             {!metrics.jiraTaskDetails && ( // Fallback if jiraTaskDetails is null/undefined for some reason
+            ) : metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && dataSourceMsg?.includes("mock") ? (
                  <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                     <div className="flex items-center gap-2">
                         <ListChecksIcon className="h-5 w-5 text-blue-500" />
-                        <span className="font-medium">Jira Tasks Worked On:</span>
+                        <span className="font-medium">Jira Tasks Worked On (Mock Data):</span>
                     </div>
                     <span className="font-semibold text-lg">0</span>
                 </div>
-            )}
+            ) : null}
             
             {metrics.error && (
                  <Alert variant="destructive" className="mt-2">
                     <AlertTriangle className="h-4 w-4" />
                     <AlertTitle>Partial Data Warning</AlertTitle>
-                    <AlertDescription>{metrics.error}</AlertDescription>
+                    <AlertDescription>{metrics.error}. Some metrics might be incomplete.</AlertDescription>
                 </Alert>
             )}
           </CardContent>
