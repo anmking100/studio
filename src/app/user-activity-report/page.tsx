@@ -5,14 +5,17 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info, Check, ChevronsUpDown, CheckCircle, ListChecksIcon } from "lucide-react";
+import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info, Check, ChevronsUpDown, CheckCircle, ListChecksIcon, ChevronDown } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Calendar } from "@/components/ui/calendar";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import type { DateRange } from "react-day-picker";
 import { format, startOfDay, subDays, endOfDay } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { UserActivityMetrics, MicrosoftGraphUser } from "@/lib/types";
+import { ScrollArea } from "@/components/ui/scroll-area";
+
 
 export default function UserActivityReportPage() {
   const [allMsGraphUsers, setAllMsGraphUsers] = useState<MicrosoftGraphUser[]>([]);
@@ -81,7 +84,7 @@ export default function UserActivityReportPage() {
     try {
       const params = new URLSearchParams({
         userId: selectedUser.id,
-        userEmail: selectedUser.userPrincipalName, // Pass userEmail for Jira
+        userEmail: selectedUser.userPrincipalName,
         startDate: dateRange.from.toISOString(),
         endDate: dateRange.to.toISOString(),
       });
@@ -284,14 +287,41 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
-                <div className="flex items-center gap-2">
-                    <ListChecksIcon className="h-5 w-5 text-blue-500" />
-                    <span className="font-medium">Jira Tasks Worked On:</span>
-                </div>
-                <span className="font-semibold text-lg">{metrics.jiraTasksWorkedOnCount} unique tasks</span>
+            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+              <div className="flex items-center gap-2">
+                  <ListChecksIcon className="h-5 w-5 text-blue-500" />
+                  <span className="font-medium">Jira Tasks Worked On:</span>
+              </div>
+              <span className="font-semibold text-lg">{metrics.jiraTasksWorkedOnCount} unique tasks</span>
             </div>
-             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+
+            {metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0 && (
+              <Accordion type="single" collapsible className="w-full">
+                <AccordionItem value="jira-task-details">
+                  <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40">
+                    <div className="flex items-center gap-2">
+                        <ChevronDown className="h-5 w-5 text-blue-500 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                        <span>View {metrics.jiraTasksWorkedOnCount} Jira Task Details</span>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent className="pt-1 pb-3 px-3 border rounded-b-md border-t-0">
+                    <ScrollArea className="h-[200px] mt-2">
+                      <ul className="space-y-2">
+                        {metrics.jiraTaskDetails.map((task) => (
+                          <li key={task.key} className="text-xs border-b pb-1">
+                            <p><strong>Key:</strong> {task.key} ({task.type})</p>
+                            <p><strong>Summary:</strong> {task.summary}</p>
+                            <p><strong>Status:</strong> {task.status}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </ScrollArea>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            )}
+
+            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <Info className="h-5 w-5 text-yellow-500" />
                     <span className="font-medium">Average Message Response Time:</span>

@@ -133,12 +133,20 @@ export interface FragmentationDataPoint {
   riskLevel?: 'Low' | 'Moderate' | 'High';
 }
 
+export interface JiraTaskDetail {
+  key: string;
+  summary: string;
+  status: string;
+  type: string;
+}
+
 export interface UserActivityMetrics {
   userId: string;
   totalMeetingMinutes: number;
   averageResponseTimeMinutes: number | null; // Placeholder for now
   meetingCount: number;
-  jiraTasksWorkedOnCount: number; // New field
+  jiraTasksWorkedOnCount: number;
+  jiraTaskDetails: JiraTaskDetail[];
   error?: string;
 }
 

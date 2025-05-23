@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as msal from '@azure/msal-node';
 import { differenceInMinutes, parseISO, startOfDay, endOfDay, format } from 'date-fns';
-import type { UserActivityMetrics, JiraIssue } from '@/lib/types';
+import type { UserActivityMetrics, JiraIssue, JiraTaskDetail } from '@/lib/types';
 
 const TENANT_ID = process.env.MS_TENANT_ID;
 const CLIENT_ID = process.env.MS_CLIENT_ID;
@@ -57,22 +57,23 @@ interface GraphCalendarEvent {
   type?: string; // e.g. "singleInstance", "occurrence", "exception", "seriesMaster"
 }
 
-async function fetchJiraTasks(userEmail: string, startDate: string, endDate: string): Promise<number> {
+async function fetchJiraTasks(userEmail: string, startDate: string, endDate: string): Promise<JiraTaskDetail[]> {
   if (!JIRA_INSTANCE_URL || !JIRA_USERNAME || !JIRA_API_TOKEN) {
     console.warn("USER_ACTIVITY_METRICS_API (Jira): Jira API integration not configured correctly on server for task count.");
-    return 0; // Or throw an error if Jira data is critical for this report
+    return [];
   }
   if (!userEmail) {
     console.warn("USER_ACTIVITY_METRICS_API (Jira): User email not provided, cannot fetch Jira tasks.");
-    return 0;
+    return [];
   }
 
   try {
     const formattedStartDate = format(parseISO(startDate), "yyyy-MM-dd HH:mm");
     const formattedEndDate = format(parseISO(endDate), "yyyy-MM-dd HH:mm");
+    // Fetch key, summary, status, and issuetype for task details
     let jql = `assignee = "${userEmail}" AND updated >= "${formattedStartDate}" AND updated <= "${formattedEndDate}" ORDER BY updated DESC`;
     
-    const apiUrl = `${JIRA_INSTANCE_URL}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=key`; // Only need 'key' for counting unique tasks
+    const apiUrl = `${JIRA_INSTANCE_URL}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=key,summary,status,issuetype`;
     console.log(`USER_ACTIVITY_METRICS_API (Jira): Fetching Jira tasks for ${userEmail}, period: ${formattedStartDate} to ${formattedEndDate}. JQL: ${jql}`);
 
     const response = await fetch(apiUrl, {
@@ -87,18 +88,25 @@ async function fetchJiraTasks(userEmail: string, startDate: string, endDate: str
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`USER_ACTIVITY_METRICS_API (Jira): Jira API request failed for user ${userEmail}. Status: ${response.status}, Body: ${errorText.substring(0,200)}`);
-      return 0; // Or throw an error
+      return []; 
     }
 
     const data = await response.json();
     const issues: JiraIssue[] = data.issues || [];
-    const uniqueIssueKeys = new Set(issues.map(issue => issue.key));
-    console.log(`USER_ACTIVITY_METRICS_API (Jira): Fetched ${issues.length} issues, ${uniqueIssueKeys.size} unique tasks for ${userEmail}.`);
-    return uniqueIssueKeys.size;
+    
+    const taskDetails: JiraTaskDetail[] = issues.map(issue => ({
+        key: issue.key,
+        summary: issue.fields.summary,
+        status: issue.fields.status.name,
+        type: issue.fields.issuetype.name,
+    }));
+
+    console.log(`USER_ACTIVITY_METRICS_API (Jira): Fetched ${issues.length} issues, mapped to ${taskDetails.length} JiraTaskDetail objects for ${userEmail}.`);
+    return taskDetails;
 
   } catch (error: any) {
     console.error(`USER_ACTIVITY_METRICS_API (Jira): Unhandled exception fetching Jira tasks for ${userEmail}:`, error.message);
-    return 0; // Or throw
+    return [];
   }
 }
 
@@ -121,9 +129,9 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (!userId || !startDateParam || !endDateParam) { // userEmail is optional for now if Jira isn't configured
+  if (!userId || !userEmail || !startDateParam || !endDateParam) { 
     return NextResponse.json(
-      { error: "Missing required query parameters: userId, startDate, and endDate." },
+      { error: "Missing required query parameters: userId, userEmail, startDate, and endDate." },
       { status: 400 }
     );
   }
@@ -132,7 +140,6 @@ export async function GET(request: NextRequest) {
   let endDateTimeFilter: string;
 
   try {
-    // Use params directly for filtering Graph API, ensure they are start/end of day for full coverage
     startDateTimeFilter = startOfDay(parseISO(startDateParam)).toISOString();
     endDateTimeFilter = endOfDay(parseISO(endDateParam)).toISOString();
     console.log(`USER_ACTIVITY_METRICS_API: Fetching MS Graph calendar events for user ${userId} from ${startDateTimeFilter} to ${endDateTimeFilter}`);
@@ -143,7 +150,7 @@ export async function GET(request: NextRequest) {
   
   let totalMeetingMinutes = 0;
   let meetingCount = 0;
-  let jiraTasksWorkedOnCount = 0;
+  let jiraTaskDetails: JiraTaskDetail[] = [];
   let apiError = null;
 
   try {
@@ -185,17 +192,17 @@ export async function GET(request: NextRequest) {
 
     // Fetch Jira tasks if userEmail is provided
     if (userEmail) {
-        // Ensure startDateParam and endDateParam are full ISO strings for Jira fetch
-        jiraTasksWorkedOnCount = await fetchJiraTasks(userEmail, startDateParam, endDateParam);
+        jiraTaskDetails = await fetchJiraTasks(userEmail, startDateParam, endDateParam);
     }
 
 
     const metrics: UserActivityMetrics = {
       userId,
       totalMeetingMinutes,
-      averageResponseTimeMinutes: null, // Placeholder
+      averageResponseTimeMinutes: null, 
       meetingCount,
-      jiraTasksWorkedOnCount,
+      jiraTasksWorkedOnCount: jiraTaskDetails.length,
+      jiraTaskDetails: jiraTaskDetails,
       error: apiError || undefined,
     };
     console.log('USER_ACTIVITY_METRICS_API: Successfully processed request. Metrics:', metrics);
