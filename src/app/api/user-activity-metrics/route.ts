@@ -70,10 +70,10 @@ async function fetchJiraTasks(userEmail: string, startDate: string, endDate: str
   try {
     const formattedStartDate = format(parseISO(startDate), "yyyy-MM-dd HH:mm");
     const formattedEndDate = format(parseISO(endDate), "yyyy-MM-dd HH:mm");
-    // Fetch key, summary, status, and issuetype for task details
+    // Fetch key, summary, status, issuetype, and statusCategory for task details
     let jql = `assignee = "${userEmail}" AND updated >= "${formattedStartDate}" AND updated <= "${formattedEndDate}" ORDER BY updated DESC`;
     
-    const apiUrl = `${JIRA_INSTANCE_URL}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=key,summary,status,issuetype`;
+    const apiUrl = `${JIRA_INSTANCE_URL}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=key,summary,status,issuetype,statusCategory`;
     console.log(`USER_ACTIVITY_METRICS_API (Jira): Fetching Jira tasks for ${userEmail}, period: ${formattedStartDate} to ${formattedEndDate}. JQL: ${jql}`);
 
     const response = await fetch(apiUrl, {
@@ -99,6 +99,7 @@ async function fetchJiraTasks(userEmail: string, startDate: string, endDate: str
         summary: issue.fields.summary,
         status: issue.fields.status.name,
         type: issue.fields.issuetype.name,
+        statusCategoryKey: issue.fields.status.statusCategory?.key,
     }));
 
     console.log(`USER_ACTIVITY_METRICS_API (Jira): Fetched ${issues.length} issues, mapped to ${taskDetails.length} JiraTaskDetail objects for ${userEmail}.`);

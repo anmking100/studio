@@ -138,6 +138,7 @@ export interface JiraTaskDetail {
   summary: string;
   status: string;
   type: string;
+  statusCategoryKey?: string;
 }
 
 export interface UserActivityMetrics {

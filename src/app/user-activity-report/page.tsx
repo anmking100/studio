@@ -1,11 +1,11 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info, Check, ChevronsUpDown, CheckCircle, ListChecksIcon, ChevronDown } from "lucide-react";
+import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info, Check, ChevronsUpDown, CheckCircle, ListChecksIcon, ChevronDown, PackageCheck, PackageSearch, PackageX } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Calendar } from "@/components/ui/calendar";
@@ -106,6 +106,32 @@ export default function UserActivityReportPage() {
   const totalMeetingHours = metrics?.totalMeetingMinutes ? (metrics.totalMeetingMinutes / 60).toFixed(1) : "0.0";
   const participatedDurationMinutes = metrics?.totalMeetingMinutes ? metrics.totalMeetingMinutes * 0.7 : 0;
   const participatedDurationHours = (participatedDurationMinutes / 60).toFixed(1);
+
+  const jiraTaskStatusCounts = useMemo(() => {
+    if (!metrics?.jiraTaskDetails) {
+      return { completed: 0, ongoing: 0, pending: 0 };
+    }
+    return metrics.jiraTaskDetails.reduce(
+      (acc, task) => {
+        if (task.statusCategoryKey === 'done') {
+          acc.completed++;
+        } else if (task.statusCategoryKey === 'indeterminate') {
+          acc.ongoing++;
+        } else if (task.statusCategoryKey === 'new') {
+          acc.pending++;
+        } else {
+          // Consider other statuses as ongoing or pending based on preference,
+          // for now, let's group unknown ones into pending or ongoing.
+          // If not explicitly 'done', it's not completed.
+          // If not explicitly 'new', it might be ongoing. Defaulting to ongoing for safety.
+           if(task.statusCategoryKey !== 'done') acc.ongoing++;
+        }
+        return acc;
+      },
+      { completed: 0, ongoing: 0, pending: 0 }
+    );
+  }, [metrics?.jiraTaskDetails]);
+
 
   return (
     <div className="space-y-6">
@@ -287,13 +313,38 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
-              <div className="flex items-center gap-2">
-                  <ListChecksIcon className="h-5 w-5 text-blue-500" />
-                  <span className="font-medium">Jira Tasks Worked On:</span>
+            
+            <div className="p-3 border rounded-md bg-secondary/30 space-y-1">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <ListChecksIcon className="h-5 w-5 text-blue-500" />
+                    <span className="font-medium">Jira Tasks Worked On (Total):</span>
+                </div>
+                <span className="font-semibold text-lg">{metrics.jiraTasksWorkedOnCount}</span>
               </div>
-              <span className="font-semibold text-lg">{metrics.jiraTasksWorkedOnCount} unique tasks</span>
+              <div className="flex items-center justify-between pl-7">
+                <div className="flex items-center gap-2 text-sm">
+                    <PackageCheck className="h-4 w-4 text-green-600" />
+                    <span className="text-muted-foreground">Number of issues completed:</span>
+                </div>
+                <span className="font-medium text-sm">{jiraTaskStatusCounts.completed}</span>
+              </div>
+              <div className="flex items-center justify-between pl-7">
+                <div className="flex items-center gap-2 text-sm">
+                    <PackageSearch className="h-4 w-4 text-yellow-600" />
+                    <span className="text-muted-foreground">Number of ongoing issues:</span>
+                </div>
+                <span className="font-medium text-sm">{jiraTaskStatusCounts.ongoing}</span>
+              </div>
+              <div className="flex items-center justify-between pl-7">
+                <div className="flex items-center gap-2 text-sm">
+                    <PackageX className="h-4 w-4 text-red-500" />
+                    <span className="text-muted-foreground">Number of pending issues:</span>
+                </div>
+                <span className="font-medium text-sm">{jiraTaskStatusCounts.pending}</span>
+              </div>
             </div>
+
 
             {metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0 && (
               <Accordion type="single" collapsible className="w-full">
@@ -311,7 +362,7 @@ export default function UserActivityReportPage() {
                           <li key={task.key} className="text-xs border-b pb-1">
                             <p><strong>Key:</strong> {task.key} ({task.type})</p>
                             <p><strong>Summary:</strong> {task.summary}</p>
-                            <p><strong>Status:</strong> {task.status}</p>
+                            <p><strong>Status:</strong> {task.status} ({task.statusCategoryKey || 'N/A'})</p>
                           </li>
                         ))}
                       </ul>
