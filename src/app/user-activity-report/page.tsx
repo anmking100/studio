@@ -11,11 +11,11 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Calendar } from "@/components/ui/calendar";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import type { DateRange } from "react-day-picker";
-import { format, startOfDay, subDays, endOfDay, parseISO, eachDayOfInterval, isBefore } from "date-fns";
+import { format, startOfDay, subDays, endOfDay, parseISO, eachDayOfInterval, isBefore, addHours, isAfter } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { UserActivityMetrics, MicrosoftGraphUser, JiraTaskDetail, GenericActivityItem } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { calculateScoreAlgorithmically, type CalculateFragmentationScoreOutput } from "@/lib/score-calculator"; 
+import { calculateScoreAlgorithmically, type CalculateFragmentationScoreOutput } from "@/lib/score-calculator";
 import {
   ResponsiveContainer,
   LineChart,
@@ -30,16 +30,17 @@ import {
 } from "recharts";
 import { ChartContainer, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 
-
+// Define the start date for using live data
 const LIVE_DATA_START_DATE = startOfDay(new Date('2025-05-22T00:00:00.000Z'));
 
-// Helper to generate consistent mock activities for a given user and day
+// Helper to generate consistent mock activities for a given user and day (copied from Team Overview)
 function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericActivityItem[] {
   const activities: GenericActivityItem[] = [];
-  const dayOfMonth = day.getUTCDate();
-  const userIdInt = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const dayOfMonth = day.getUTCDate(); // Use UTC date for consistency
+  const userIdInt = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0); // Simple int from userId
 
-  if ((dayOfMonth + userIdInt) % 4 === 1) { // Meeting pattern 1
+  // Mock meetings
+  if ((dayOfMonth + userIdInt) % 4 === 1) {
     activities.push({
       type: 'teams_meeting',
       timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 10 + (userIdInt % 3), 0, 0)).toISOString(),
@@ -48,7 +49,7 @@ function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericAc
       durationMinutes: 30 + ((userIdInt % 3) * 10),
     });
   }
-  if ((dayOfMonth + userIdInt + 2) % 5 === 0) { // Meeting pattern 2
+  if ((dayOfMonth + userIdInt + 2) % 5 === 0) {
      activities.push({
       type: 'teams_meeting',
       timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 14 + (userIdInt % 2), 30, 0)).toISOString(),
@@ -58,30 +59,26 @@ function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericAc
     });
   }
 
-  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2); 
+  // Mock Jira tasks
+  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2) + 1; // 1 to 3 mock jira tasks
   for (let i = 0; i < numJiraTasks; i++) {
-    const isDone = (dayOfMonth + i + userIdInt) % 4 === 0; 
-    const isIndeterminate = (dayOfMonth + i + userIdInt) % 4 === 1;
+    const isDone = (dayOfMonth + i + userIdInt) % 3 === 0;
     const taskType = (i + userIdInt) % 2 === 0 ? 'jira_issue_task' : 'jira_issue_bug';
-    let statusCategoryKey = 'new';
-    if (isDone) statusCategoryKey = 'done';
-    else if (isIndeterminate) statusCategoryKey = 'indeterminate';
-
     activities.push({
       type: taskType,
       timestamp: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 9 + i + (userIdInt % 4), 15 * i, 0)).toISOString(),
       details: `Mock Jira ${taskType.split('_').pop()} ${i+1} for user ID slice ${userId.substring(0,5)} on day ${dayOfMonth}`,
       source: 'jira',
-      jiraStatusCategoryKey: statusCategoryKey,
+      jiraStatusCategoryKey: isDone ? 'done' : ((dayOfMonth + i) % 2 === 0 ? 'indeterminate' : 'new'),
     });
   }
   return activities.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
+// Helper to calculate metrics from a list of mock activities
 function calculateMetricsFromMockActivities(activities: GenericActivityItem[], userId: string): UserActivityMetrics {
   let totalMeetingMinutes = 0;
   const jiraTaskDetails: JiraTaskDetail[] = [];
-  const jiraStatusCounts = { completed: 0, ongoing: 0, pending: 0 };
 
   activities.forEach(activity => {
     if (activity.type === 'teams_meeting' && activity.durationMinutes) {
@@ -96,11 +93,6 @@ function calculateMetricsFromMockActivities(activities: GenericActivityItem[], u
         statusCategoryKey: activity.jiraStatusCategoryKey,
       };
       jiraTaskDetails.push(detail);
-      
-      if (detail.statusCategoryKey === 'done') jiraStatusCounts.completed++;
-      else if (detail.statusCategoryKey === 'indeterminate') jiraStatusCounts.ongoing++;
-      else if (detail.statusCategoryKey === 'new') jiraStatusCounts.pending++;
-      else jiraStatusCounts.ongoing++; 
     }
   });
 
@@ -157,11 +149,10 @@ export default function UserActivityReportPage() {
   const [metrics, setMetrics] = useState<UserActivityMetrics | null>(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
-  
+
   const [dailyChartData, setDailyChartData] = useState<DailyChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
   const [isLiveDataPeriodForGraphs, setIsLiveDataPeriodForGraphs] = useState(false);
-
 
   useEffect(() => {
     const fetchMsGraphUsers = async () => {
@@ -175,8 +166,9 @@ export default function UserActivityReportPage() {
         }
         const data: MicrosoftGraphUser[] = await response.json();
         setAllMsGraphUsers(data.filter(u => u.id && u.displayName));
-      } catch (err: any) {
-        console.error("Error fetching MS Graph users:", err);
+      } catch (err: any)
+      {
+        console.error("Error fetching MS Graph users for report page:", err);
         setMsUsersError(err.message || "An unknown error occurred while fetching users.");
       } finally {
         setIsLoadingMsUsers(false);
@@ -185,14 +177,9 @@ export default function UserActivityReportPage() {
     fetchMsGraphUsers();
   }, []);
 
-
   const handleGenerateReport = async () => {
-    if (!selectedUser) {
+    if (!selectedUser || !selectedUser.id) {
       setMetricsError("Please select a user.");
-      return;
-    }
-    if (!selectedUser.id) {
-      setMetricsError("Selected user is missing an ID. Cannot generate report.");
       return;
     }
     if (!dateRange?.from || !dateRange?.to) {
@@ -207,17 +194,17 @@ export default function UserActivityReportPage() {
     setDailyChartData([]);
 
     const useMockDataForPeriod = isBefore(dateRange.to, LIVE_DATA_START_DATE);
-    
+    setIsLiveDataPeriodForGraphs(!useMockDataForPeriod);
 
     if (useMockDataForPeriod) {
       console.log(`USER ACTIVITY REPORT: Using MOCK data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
-      let aggregatedMockActivities: GenericActivityItem[] = [];
-      const newDailyChartData: DailyChartDataPoint[] = [];
+      let aggregatedMockActivitiesForRange: GenericActivityItem[] = [];
+      const newDailyChartDataPoints: DailyChartDataPoint[] = [];
       const daysInSelectedRange = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
 
-      daysInSelectedRange.forEach(day => {
+      for (const day of daysInSelectedRange) {
         const mockActivitiesForDay = getConsistentMockActivitiesForDay(selectedUser.id!, day);
-        aggregatedMockActivities.push(...mockActivitiesForDay);
+        aggregatedMockActivitiesForRange.push(...mockActivitiesForDay);
 
         // Calculate daily metrics for charts
         const scoreResult: CalculateFragmentationScoreOutput = calculateScoreAlgorithmically({
@@ -237,10 +224,10 @@ export default function UserActivityReportPage() {
             if (task.jiraStatusCategoryKey === 'done') dailyJiraCompleted++;
             else if (task.jiraStatusCategoryKey === 'indeterminate') dailyJiraOngoing++;
             else if (task.jiraStatusCategoryKey === 'new') dailyJiraPending++;
-            else dailyJiraOngoing++; 
+            else dailyJiraOngoing++;
         });
         
-        newDailyChartData.push({
+        newDailyChartDataPoints.push({
             date: format(day, "MMM d"),
             isoDate: day.toISOString(),
             fragmentationScore: scoreResult.fragmentationScore,
@@ -249,18 +236,17 @@ export default function UserActivityReportPage() {
             jiraOngoing: dailyJiraOngoing,
             jiraPending: dailyJiraPending,
         });
-      });
+      }
       
-      const mockMetrics = calculateMetricsFromMockActivities(aggregatedMockActivities, selectedUser.id!);
-      const sortedDailyChartData = newDailyChartData.sort((a,b) => new Date(a.isoDate).getTime() - new Date(b.isoDate).getTime());
+      const mockMetrics = calculateMetricsFromMockActivities(aggregatedMockActivitiesForRange, selectedUser.id!);
+      const sortedDailyChartData = newDailyChartDataPoints.sort((a,b) => new Date(a.isoDate).getTime() - new Date(b.isoDate).getTime());
       console.log("USER ACTIVITY REPORT: Populating dailyChartData (mock period) with:", JSON.stringify(sortedDailyChartData, null, 2));
       setDailyChartData(sortedDailyChartData);
       setMetrics(mockMetrics);
       setIsLoadingMetrics(false);
       setIsLoadingChartData(false);
-      setIsLiveDataPeriodForGraphs(false); 
 
-    } else {
+    } else { // Use live data
       console.log(`USER ACTIVITY REPORT: Using LIVE data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
       try {
         const params = new URLSearchParams({
@@ -272,7 +258,7 @@ export default function UserActivityReportPage() {
         if (selectedUser.userPrincipalName) {
           params.append('userEmail', selectedUser.userPrincipalName);
         } else {
-          console.warn(`User ${selectedUser.displayName} (ID: ${selectedUser.id}) is missing userPrincipalName. Jira tasks might not be fetched or might be inaccurate if live data is used for tasks.`);
+          console.warn(`User ${selectedUser.displayName} (ID: ${selectedUser.id}) is missing userPrincipalName. Jira tasks might not be fetched for live data.`);
         }
 
         const response = await fetch(`/api/user-activity-metrics?${params.toString()}`);
@@ -282,11 +268,10 @@ export default function UserActivityReportPage() {
           throw new Error(responseData.error || responseData.details || `Failed to fetch activity metrics: ${response.statusText}`);
         }
         setMetrics(responseData as UserActivityMetrics);
-        setDailyChartData([]); 
-        setIsLiveDataPeriodForGraphs(true);
+        setDailyChartData([]); // For live data, aggregated API doesn't provide daily breakdown for charts yet
       } catch (err: any) {
-        console.error("Error fetching user activity metrics:", err);
-        setMetricsError(err.message || "An unknown error occurred while fetching metrics.");
+        console.error("Error fetching user activity metrics (live):", err);
+        setMetricsError(err.message || "An unknown error occurred while fetching live metrics.");
       } finally {
         setIsLoadingMetrics(false);
         setIsLoadingChartData(false);
@@ -332,9 +317,8 @@ export default function UserActivityReportPage() {
                 User Activity Report
               </CardTitle>
               <CardDescription className="text-lg text-primary-foreground/80 mt-1">
-                Generate activity summaries for a specific user and time frame. 
-                For periods ending before {format(LIVE_DATA_START_DATE, "PP")}, metrics and daily charts are based on mock patterns. 
-                For later periods, metrics are live; daily charts for live data are not yet available.
+                Generate activity summaries for a specific user and time frame.
+                For periods ending before {format(LIVE_DATA_START_DATE, "PP")}, metrics and daily charts are based on mock patterns.
               </CardDescription>
             </div>
           </div>
@@ -505,7 +489,7 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <MessageSquareText className="h-5 w-5 text-purple-500" />
                     <span className="font-medium">Average Message Response Time:</span>
@@ -550,7 +534,7 @@ export default function UserActivityReportPage() {
                  <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                     <div className="flex items-center gap-2">
                         <ListChecksIcon className="h-5 w-5 text-blue-500" />
-                        <span className="font-medium">Jira Tasks Worked On (Live Data):</span>
+                        <span className="font-medium">Jira Tasks Worked On:</span>
                     </div>
                     <span className="font-semibold text-lg">{jiraTaskStatusCounts.total}</span>
                 </div>
@@ -646,19 +630,9 @@ export default function UserActivityReportPage() {
           </Card>
         </div>
       )}
-      {!isLoadingChartData && isLiveDataPeriodForGraphs && (
-        <Alert className="mt-6">
-          <BarChartHorizontalBig className="h-4 w-4" />
-          <AlertTitle>Daily Charts for Live Data</AlertTitle>
-          <AlertDescription>
-            Daily trend charts for live data periods are not yet available. 
-            The current API provides aggregated metrics for the entire selected live range.
-            Future enhancements could include daily breakdowns for live data.
-          </AlertDescription>
-        </Alert>
-      )}
-
+      {/* Removed the specific "Daily Charts for Live Data not yet available" alert.
+          If dailyChartData is empty (which it will be for live data periods),
+          the charts section above will simply not render due to dailyChartData.length > 0 condition. */}
     </div>
   );
 }
-
