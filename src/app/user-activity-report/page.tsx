@@ -33,13 +33,12 @@ import { ChartContainer, ChartTooltipContent, type ChartConfig } from "@/compone
 // Define the start date for using live data
 const LIVE_DATA_START_DATE = startOfDay(new Date('2025-05-22T00:00:00.000Z'));
 
-// Helper to generate consistent mock activities for a given user and day (copied from Team Overview)
+// Helper to generate consistent mock activities for a given user and day
 function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericActivityItem[] {
   const activities: GenericActivityItem[] = [];
-  const dayOfMonth = day.getUTCDate(); // Use UTC date for consistency
-  const userIdInt = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0); // Simple int from userId
+  const dayOfMonth = day.getUTCDate(); 
+  const userIdInt = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
 
-  // Mock meetings
   if ((dayOfMonth + userIdInt) % 4 === 1) {
     activities.push({
       type: 'teams_meeting',
@@ -59,8 +58,7 @@ function getConsistentMockActivitiesForDay(userId: string, day: Date): GenericAc
     });
   }
 
-  // Mock Jira tasks
-  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2) + 1; // 1 to 3 mock jira tasks
+  const numJiraTasks = (dayOfMonth % 3) + (userIdInt % 2) + 1;
   for (let i = 0; i < numJiraTasks; i++) {
     const isDone = (dayOfMonth + i + userIdInt) % 3 === 0;
     const taskType = (i + userIdInt) % 2 === 0 ? 'jira_issue_task' : 'jira_issue_bug';
@@ -105,6 +103,7 @@ function calculateMetricsFromMockActivities(activities: GenericActivityItem[], u
     jiraTaskDetails: jiraTaskDetails,
   };
 }
+
 
 interface DailyChartDataPoint {
   date: string; // Formatted for chart axis e.g. "May 20"
@@ -195,6 +194,8 @@ export default function UserActivityReportPage() {
 
     const useMockDataForPeriod = isBefore(dateRange.to, LIVE_DATA_START_DATE);
     setIsLiveDataPeriodForGraphs(!useMockDataForPeriod);
+    console.log(`USER ACTIVITY REPORT: useMockDataForPeriod = ${useMockDataForPeriod}, isLiveDataPeriodForGraphs = ${!useMockDataForPeriod}`);
+
 
     if (useMockDataForPeriod) {
       console.log(`USER ACTIVITY REPORT: Using MOCK data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
@@ -206,7 +207,6 @@ export default function UserActivityReportPage() {
         const mockActivitiesForDay = getConsistentMockActivitiesForDay(selectedUser.id!, day);
         aggregatedMockActivitiesForRange.push(...mockActivitiesForDay);
 
-        // Calculate daily metrics for charts
         const scoreResult: CalculateFragmentationScoreOutput = calculateScoreAlgorithmically({
             userId: selectedUser.id!,
             activities: mockActivitiesForDay,
@@ -224,7 +224,7 @@ export default function UserActivityReportPage() {
             if (task.jiraStatusCategoryKey === 'done') dailyJiraCompleted++;
             else if (task.jiraStatusCategoryKey === 'indeterminate') dailyJiraOngoing++;
             else if (task.jiraStatusCategoryKey === 'new') dailyJiraPending++;
-            else dailyJiraOngoing++;
+            else dailyJiraOngoing++; 
         });
         
         newDailyChartDataPoints.push({
@@ -240,13 +240,13 @@ export default function UserActivityReportPage() {
       
       const mockMetrics = calculateMetricsFromMockActivities(aggregatedMockActivitiesForRange, selectedUser.id!);
       const sortedDailyChartData = newDailyChartDataPoints.sort((a,b) => new Date(a.isoDate).getTime() - new Date(b.isoDate).getTime());
-      console.log("USER ACTIVITY REPORT: Populating dailyChartData (mock period) with:", JSON.stringify(sortedDailyChartData, null, 2));
+      console.log("USER ACTIVITY REPORT: Populating dailyChartData (mock period) with:", sortedDailyChartData);
       setDailyChartData(sortedDailyChartData);
       setMetrics(mockMetrics);
       setIsLoadingMetrics(false);
       setIsLoadingChartData(false);
 
-    } else { // Use live data
+    } else { 
       console.log(`USER ACTIVITY REPORT: Using LIVE data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
       try {
         const params = new URLSearchParams({
@@ -268,7 +268,8 @@ export default function UserActivityReportPage() {
           throw new Error(responseData.error || responseData.details || `Failed to fetch activity metrics: ${response.statusText}`);
         }
         setMetrics(responseData as UserActivityMetrics);
-        setDailyChartData([]); // For live data, aggregated API doesn't provide daily breakdown for charts yet
+        setDailyChartData([]); 
+        console.log("USER ACTIVITY REPORT: Live data fetched. Daily chart data will be empty as API provides aggregated metrics.");
       } catch (err: any) {
         console.error("Error fetching user activity metrics (live):", err);
         setMetricsError(err.message || "An unknown error occurred while fetching live metrics.");
@@ -305,6 +306,10 @@ export default function UserActivityReportPage() {
     );
     return { ...counts, total: metrics.jiraTaskDetails.length };
   }, [metrics?.jiraTaskDetails]);
+
+  const showCharts = !isLoadingChartData && dailyChartData.length > 0 && !isLiveDataPeriodForGraphs;
+  console.log("USER ACTIVITY REPORT: Chart rendering check -> isLoadingChartData:", isLoadingChartData, "dailyChartData.length:", dailyChartData.length, "isLiveDataPeriodForGraphs:", isLiveDataPeriodForGraphs, "showCharts:", showCharts);
+
 
   return (
     <div className="space-y-6">
@@ -497,7 +502,7 @@ export default function UserActivityReportPage() {
                 <span className="font-semibold text-sm text-muted-foreground">(Feature Coming Soon)</span>
             </div>
             
-            {(metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0) || (metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && !isLiveDataPeriodForGraphs) ? (
+            {(metrics.jiraTaskDetails && metrics.jiraTaskDetails.length > 0) || (metrics.jiraTaskDetails && metrics.jiraTaskDetails.length === 0 && !useMockDataForPeriod && !isLiveDataPeriodForGraphs) ? (
               <Accordion type="single" collapsible className="w-full" defaultValue="jira-task-summary">
                 <AccordionItem value="jira-task-summary">
                    <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
@@ -525,7 +530,7 @@ export default function UserActivityReportPage() {
                         </ul>
                         </ScrollArea>
                     ) : (
-                        <p className="text-xs text-muted-foreground mt-2">No Jira tasks found for this user in this period (based on mock data patterns or live data).</p>
+                        <p className="text-xs text-muted-foreground mt-2">No Jira tasks found for this user in this period ({isLiveDataPeriodForGraphs ? "live data" : "mock data"}).</p>
                     )}
                   </AccordionContent>
                 </AccordionItem>
@@ -552,7 +557,7 @@ export default function UserActivityReportPage() {
       )}
 
       {/* Charts Section */}
-      {!isLoadingChartData && dailyChartData.length > 0 && !isLiveDataPeriodForGraphs && (
+      {showCharts && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
           {/* Stress Load Chart */}
           <Card className="shadow-md">
@@ -630,9 +635,8 @@ export default function UserActivityReportPage() {
           </Card>
         </div>
       )}
-      {/* Removed the specific "Daily Charts for Live Data not yet available" alert.
-          If dailyChartData is empty (which it will be for live data periods),
-          the charts section above will simply not render due to dailyChartData.length > 0 condition. */}
     </div>
   );
 }
+
+    
