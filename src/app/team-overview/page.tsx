@@ -11,18 +11,18 @@ import { Users, BarChart3, Loader2, AlertTriangle, ShieldCheck, CalendarDays, Re
 import Image from "next/image";
 import { calculateScoreAlgorithmically } from "@/lib/score-calculator";
 import type { TeamMemberFocus, GenericActivityItem, MicrosoftGraphUser, HistoricalScore, CalculateFragmentationScoreInputType, CalculateFragmentationScoreOutput, JiraIssue } from "@/lib/types";
-import { format, subDays, startOfDay, endOfDay, parseISO, isEqual, isWithinInterval, isBefore } from 'date-fns';
+import { format, subDays, startOfDay, endOfDay, parseISO, isEqual, isWithinInterval } from 'date-fns';
 import type { DateRange } from "react-day-picker";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
 import { getConsistentMockActivitiesForDay } from "@/lib/mock-activity-generator";
+import { ChatbotWidget } from "@/components/chatbot/ChatbotWidget";
 
 
 const NUMBER_OF_HISTORICAL_DAYS_FOR_TREND = 5;
 const LIVE_DATA_START_DATE = startOfDay(new Date('2025-05-22T00:00:00.000Z'));
-
 
 // Client-side mapping for Jira issues from the global list
 function mapJiraIssueToActivity(issue: JiraIssue): GenericActivityItem {
@@ -70,8 +70,8 @@ export default function TeamOverviewPage() {
   const fetchActivitiesForDay = useCallback(async (
     memberId: string,
     memberEmail: string | undefined,
-    dayStart: Date, // This is already startOfDay
-    dayEnd: Date,   // This is endOfDay or current time for today
+    dayStart: Date,
+    dayEnd: Date,
     allJiraIssuesSnapshot: JiraIssue[] | null
   ): Promise<{ activities: GenericActivityItem[], error: string | null, activitiesCount: number }> => {
     console.log(`TEAM OVERVIEW (DailyActivityFetch): Processing activities for member ${memberId} (${memberEmail || 'No Email'}) for period: ${dayStart.toISOString()} to ${dayEnd.toISOString()}`);
@@ -81,7 +81,6 @@ export default function TeamOverviewPage() {
     let teamsActivitiesFetchedCount = 0;
     let dataSourceType = "";
 
-    // Determine if we should use mock data for this day
     if (dayStart.getTime() < LIVE_DATA_START_DATE.getTime()) {
       dataSourceType = "MOCK";
       console.log(`TEAM OVERVIEW (DailyActivityFetch): Using ${dataSourceType} data for member ${memberId} for day ${format(dayStart, 'yyyy-MM-dd')}`);
@@ -92,7 +91,6 @@ export default function TeamOverviewPage() {
       dataSourceType = "LIVE";
       console.log(`TEAM OVERVIEW (DailyActivityFetch): Using ${dataSourceType} data for member ${memberId} for day ${format(dayStart, 'yyyy-MM-dd')}`);
       
-      // Fetch Live Jira Activities (filter from global list)
       if (memberEmail && allJiraIssuesSnapshot && allJiraIssuesSnapshot.length > 0) {
         const memberEmailLower = memberEmail.toLowerCase();
         console.log(`TEAM OVERVIEW (DailyActivityFetch) - JIRA PRE-FILTER: Global Jira issues available (count: ${allJiraIssuesSnapshot.length}). Filtering for ${memberEmailLower} on day ${format(dayStart, 'yyyy-MM-dd')}`);
@@ -112,10 +110,9 @@ export default function TeamOverviewPage() {
           }
           
           // console.log(`TEAM OVERVIEW (DailyActivityFetch) - JIRA ISSUE CHECK: IssueKey=${issue.key}, IssueUpdated=${issue.fields.updated}, ParsedDate=${parsedIssueUpdatedDate?.toISOString()}, Assignee=${assigneeEmailInIssue}(${assigneeEmailLower}), AssigneeMatch=${isAssigneeMatch}, DateMatch=${isDateMatch} (Range: ${dayStart.toISOString()} - ${dayEnd.toISOString()})`);
-
-          if (isAssigneeMatch && isDateMatch) {
+           if (isAssigneeMatch && isDateMatch) {
                console.log(
-                  `TEAM OVERVIEW (DailyActivityFetch) - JIRA ISSUE MATCHED & DATE VALID: IssueKey=${issue.key} (Assignee: ${assigneeEmailInIssue}, Updated: ${issue.fields.updated}) for User: ${memberEmail} on ${format(dayStart, 'yyyy-MM-dd')}`
+                  `TEAM OVERVIEW (DailyActivityFetch) - JIRA ISSUE MATCHED & DATE VALID: IssueKey=${issue.key} (Assignee: ${assigneeEmailInIssue}, Updated: ${issue.fields.updated}) for User: ${memberEmail} on ${format(dayStart, 'yyyy-MM-dd')}. StatusCategoryKey: ${issue.fields.status.statusCategory?.key}`
               );
           }
           return isAssigneeMatch && isDateMatch;
@@ -127,7 +124,6 @@ export default function TeamOverviewPage() {
           dailyActivities.push(...mappedJiraActivities);
           jiraActivitiesFetchedCount = mappedJiraActivities.length;
           console.log(`TEAM OVERVIEW (DailyActivityFetch) - JIRA MAPPED: Mapped ${mappedJiraActivities.length} Jira activities for ${memberId} for day ${format(dayStart, 'yyyy-MM-dd')}.`);
-          console.log(`TEAM OVERVIEW (DailyActivityFetch): Specifically, ${mappedJiraActivities.length} JIRA activities were fetched for ${memberId} for day ${format(dayStart, 'yyyy-MM-dd')}.`);
         }
       } else if (memberEmail && allJiraIssuesSnapshot === null) {
         console.warn(`TEAM OVERVIEW (DailyActivityFetch) - JIRA: Global Jira issues not loaded yet for member ${memberId} on ${format(dayStart, 'yyyy-MM-dd')}.`);
@@ -138,8 +134,6 @@ export default function TeamOverviewPage() {
         console.warn(`TEAM OVERVIEW (DailyActivityFetch) - JIRA: No memberEmail provided for ${memberId} on ${format(dayStart, 'yyyy-MM-dd')}. Cannot filter Jira issues.`);
       }
 
-
-      // Fetch Live Teams Activities
       try {
         const teamsResponse = await fetch(`/api/teams/activity?userId=${encodeURIComponent(memberId)}&startDate=${encodeURIComponent(dayStart.toISOString())}&endDate=${encodeURIComponent(dayEnd.toISOString())}`, { cache: 'no-store' });
         if (teamsResponse.ok) {
@@ -158,7 +152,7 @@ export default function TeamOverviewPage() {
         apiFetchError = (apiFetchError ? apiFetchError + "; " : "") + teamsCatchError;
         console.warn(`TEAM OVERVIEW (DailyActivityFetch): Teams fetch exception for ${memberId} on ${format(dayStart, 'yyyy-MM-dd')}: ${teamsCatchError}`);
       }
-    } // End of live data block
+    }
     
     dailyActivities.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const totalActivitiesForDay = dailyActivities.length;
@@ -295,7 +289,7 @@ export default function TeamOverviewPage() {
       scoreError: overallMemberError,
       activityError: currentDayActivityError,
     };
-  }, [fetchActivitiesAndCalculateDailyScore, fetchActivitiesForDay]);
+  }, [fetchActivitiesAndCalculateDailyScore]);
 
 
   const fetchAllDataAndProcess = useCallback(async () => {
@@ -331,6 +325,8 @@ export default function TeamOverviewPage() {
     console.log(`TEAM OVERVIEW (MainProcess): Effective processing range for ALL members: ${format(effectiveRangeFrom, 'yyyy-MM-dd')} to ${format(effectiveRangeEndForFetch, 'yyyy-MM-dd HH:mm:ss')}`);
     
     console.log(`TEAM OVERVIEW (MainProcess): Fetching ALL ASSIGNED JIRA ISSUES for global date range: ${dateRange.from.toISOString()} to ${dateRange.to.toISOString()}`);
+    console.log(`TEAM OVERVIEW: Fetching ALL ASSIGNED JIRA ISSUES for global date range: ${dateRange.from.toISOString()} to ${dateRange.to.toISOString()}`);
+
 
     let fetchedAllJiraIssues: JiraIssue[] | null = null;
     try {
@@ -402,7 +398,7 @@ export default function TeamOverviewPage() {
     console.log(`TEAM OVERVIEW (MainProcess): Starting to process ${initialTeamDataSetup.length} members. Global Jira data (count: ${fetchedAllJiraIssues?.length ?? 'N/A - Error or Empty'}) will be used for filtering.`);
     
     const processedMembersPromises = initialTeamDataSetup.map(async (memberInit) => {
-       try {
+      try {
         const {
             currentDayScoreData: _cds, historicalScores: _hs, averageHistoricalScore: _ahs,
             isLoadingScore: _ils, isLoadingActivities: _ila, scoreError: _se, activityError: _ae,
@@ -435,6 +431,29 @@ export default function TeamOverviewPage() {
       setTeamData(processedMembers.sort((a,b) => a.name.localeCompare(b.name)));
     } catch (error) {
       console.error("TEAM OVERVIEW (MainProcess): Error during Promise.all for processedMembers:", error);
+      // Attempt to update UI with any partial successes or errors
+      const results = await Promise.allSettled(processedMembersPromises);
+      const updatedMembers = results.map((result, index) => {
+          if (result.status === 'fulfilled') {
+              return result.value;
+          } else {
+              console.error(`TEAM OVERVIEW (MainProcess): Failed to process member ${initialTeamDataSetup[index].name}:`, result.reason);
+              const { 
+                  currentDayScoreData: _co, historicalScores: _ho, averageHistoricalScore: _ao,
+                  isLoadingScore: _ilo, isLoadingActivities: _iao, scoreError: _so, activityError: _aoe,
+                  ...baseForError
+              } = initialTeamDataSetup[index];
+              const errorMessage = result.reason instanceof Error ? result.reason.message : String(result.reason);
+              return {
+                  ...baseForError,
+                  isLoadingScore: false, isLoadingActivities: false,
+                  scoreError: `Critical error during processing: ${errorMessage}.`,
+                  activityError: `Critical error during processing: ${errorMessage}.`,
+                  currentDayScoreData: null, historicalScores: [], averageHistoricalScore: null,
+              };
+          }
+      });
+      setTeamData(updatedMembers.sort((a,b) => a.name.localeCompare(b.name)));
     }
     
     setIsProcessingMembers(false);
@@ -460,7 +479,7 @@ export default function TeamOverviewPage() {
     const newFrom = startOfDay(day);
     setDateRange(prev => {
         const currentTo = prev?.to || new Date(); 
-        const newTo = isBefore(currentTo, newFrom) ? endOfDay(newFrom) : currentTo;
+        const newTo = newFrom > currentTo ? endOfDay(newFrom) : currentTo; // Ensure 'to' is not before 'from'
         return { from: newFrom, to: newTo };
     });
   };
@@ -470,7 +489,7 @@ export default function TeamOverviewPage() {
     const newTo = isEqual(startOfDay(day), startOfDay(new Date())) ? new Date() : endOfDay(day);
     setDateRange(prev => {
         const currentFrom = prev?.from || startOfDay(subDays(newTo, 6)); 
-        const newFrom = newTo < currentFrom ? startOfDay(newTo) : currentFrom;
+        const newFrom = newTo < currentFrom ? startOfDay(newTo) : currentFrom; // Ensure 'from' is not after 'to'
         return { from: newFrom, to: newTo };
     });
   };
@@ -550,6 +569,7 @@ export default function TeamOverviewPage() {
         );
       } catch (retryError: any) {
          console.error(`TEAM OVERVIEW (Retry): CRITICAL failure during retry for member ${memberId}. Error: ${retryError?.message || retryError}`, retryError);
+         const errorMessage = retryError instanceof Error ? retryError.message : String(retryError);
          setTeamData(prevTeamData =>
             prevTeamData.map(m =>
                 m.id === memberId ? { 
@@ -599,7 +619,7 @@ export default function TeamOverviewPage() {
             <CardDescription>
              Score for selected End Date is based on activities for that day.
              Historical trend shows daily scores for up to {NUMBER_OF_HISTORICAL_DAYS_FOR_TREND} prior days within selected Start Date.
-             Data source: Mock before {format(LIVE_DATA_START_DATE, "MMM dd, yyyy")}, Live from that date.
+             Data source: Mock before {format(LIVE_DATA_START_DATE, "MMM dd, yyyy")}, Live from that date. Refresh updates End Date to current time if it's today.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col sm:flex-row gap-4 items-center flex-wrap">
@@ -649,11 +669,6 @@ export default function TeamOverviewPage() {
               Refresh Data
             </Button>
           </CardContent>
-           <CardHeader>
-            <CardDescription className="text-xs text-muted-foreground">
-              Jira issues are fetched globally for the selected date range once per refresh.
-            </CardDescription>
-          </CardHeader>
         </Card>
       )}
       
@@ -804,6 +819,8 @@ export default function TeamOverviewPage() {
           activityDate={dateRange?.to}
         />
       )}
+      {isHR && <ChatbotWidget />}
     </div>
   );
 }
+

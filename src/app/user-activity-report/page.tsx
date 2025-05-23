@@ -5,7 +5,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, CheckCircle, ListChecksIcon, ChevronDown, FileQuestion, Hourglass, MessageSquareText, LineChart as LineChartIcon, BarChart2, ListFilter } from "lucide-react";
+import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, CheckCircle, ListChecksIcon, ChevronDown, FileQuestion, Hourglass, MessageSquareText, LineChart as LineChartIcon, BarChart2 as BarChart2Icon, ListFilter } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Calendar } from "@/components/ui/calendar";
@@ -31,13 +31,14 @@ import {
   CartesianGrid,
 } from "recharts";
 import { ChartContainer, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { ChatbotWidget } from "@/components/chatbot/ChatbotWidget";
 
 
 const LIVE_DATA_START_DATE = startOfDay(new Date('2025-05-22T00:00:00.000Z'));
 
 interface DailyChartDataPoint {
-  date: string; // Formatted for chart axis e.g. "May 20"
-  isoDate: string; // Full ISO date string for reference
+  date: string; 
+  isoDate: string; 
   fragmentationScore: number | null;
   meetingHours: number;
   jiraCompleted: number;
@@ -46,15 +47,15 @@ interface DailyChartDataPoint {
 }
 
 const stressChartConfig = {
-  score: { label: "Score", color: "hsl(var(--destructive))" },
+  score: { label: "Score", color: "hsl(var(--chart-1))" },
 } satisfies ChartConfig;
 
 const meetingHoursChartConfig = {
-  hours: { label: "Hours", color: "hsl(var(--primary))" },
+  hours: { label: "Meeting Hours", color: "hsl(var(--chart-2))" },
 } satisfies ChartConfig;
 
 const jiraTasksChartConfig = {
-  completed: { label: "Completed", color: "hsl(var(--chart-2))" }, 
+  completed: { label: "Completed", color: "hsl(var(--chart-3))" }, 
   ongoing: { label: "Ongoing", color: "hsl(var(--chart-4))" },   
   pending: { label: "Pending", color: "hsl(var(--chart-5))" },   
 } satisfies ChartConfig;
@@ -64,15 +65,14 @@ const jiraTasksChartConfig = {
 function calculateMetricsFromMockActivities(activities: GenericActivityItem[], userId: string): UserActivityMetrics {
   let totalMeetingMinutes = 0;
   const jiraTaskDetails: JiraTaskDetail[] = [];
-  let jiraActivityIndex = 0;
-
+  
   activities.forEach((activity, index) => {
     if (activity.type === 'teams_meeting' && activity.durationMinutes) {
       totalMeetingMinutes += activity.durationMinutes;
     }
     if (activity.source === 'jira' && activity.type.startsWith('jira_issue_')) {
       const detail: JiraTaskDetail = {
-        key: `MOCK-${activity.details?.substring(0,10) || Math.random().toString(36).substring(2, 7)}-${index}`, // Ensure unique key with index
+        key: `MOCK-${activity.details?.substring(0,10) || Math.random().toString(36).substring(2, 7)}-${index}`,
         summary: activity.details || "Mock Jira Task",
         status: activity.jiraStatusCategoryKey === 'done' ? 'Done' : activity.jiraStatusCategoryKey === 'indeterminate' ? 'In Progress' : 'To Do',
         type: activity.type.replace('jira_issue_', ''),
@@ -114,7 +114,6 @@ export default function UserActivityReportPage() {
   const [dailyChartData, setDailyChartData] = useState<DailyChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
   const [isLiveDataPeriodForGraphs, setIsLiveDataPeriodForGraphs] = useState(false);
-  // const [dataSourceMsg, setDataSourceMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchMsGraphUsers = async () => {
@@ -154,13 +153,11 @@ export default function UserActivityReportPage() {
     setMetricsError(null);
     setMetrics(null);
     setDailyChartData([]);
-    // setDataSourceMsg(null);
     
     const useMockDataForPeriod = isBefore(dateRange.to, LIVE_DATA_START_DATE);
     setIsLiveDataPeriodForGraphs(!useMockDataForPeriod);
 
     if (useMockDataForPeriod) {
-      // setDataSourceMsg("Metrics based on consistent mock activity patterns for this historical period.");
       console.log(`USER ACTIVITY REPORT: Using MOCK data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
       
       const daysInSelectedRange = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
@@ -214,7 +211,6 @@ export default function UserActivityReportPage() {
       setIsLoadingChartData(false);
 
     } else { 
-      // setDataSourceMsg("Metrics based on live API data. Daily chart breakdown for live data is not generated by this specific report.");
       console.log(`USER ACTIVITY REPORT: Using LIVE data for range ${format(dateRange.from, "yyyy-MM-dd")} to ${format(dateRange.to, "yyyy-MM-dd")} for user ${selectedUser.displayName}`);
       try {
         const params = new URLSearchParams({
@@ -263,10 +259,10 @@ export default function UserActivityReportPage() {
           acc.completed++;
         } else if (statusKey === 'indeterminate') {
           acc.ongoing++;
-        } else if (statusKey === 'new') {
+        } else if (statusKey === 'new') { // Typically 'new' or 'todo' category for pending
           acc.pending++;
-        } else if (statusKey !== '') { 
-           acc.ongoing++;
+        } else if (statusKey !== '') { // Catch-all for other non-done statuses as ongoing
+           acc.ongoing++; // Default to ongoing if not 'done' or explicitly 'new'
         }
         return acc;
       },
@@ -277,9 +273,6 @@ export default function UserActivityReportPage() {
 
   const showCharts = !isLoadingChartData && dailyChartData.length > 0 && !isLiveDataPeriodForGraphs;
   console.log("USER ACTIVITY REPORT: Chart rendering check -> isLoadingChartData:", isLoadingChartData, "dailyChartData.length:", dailyChartData.length, "isLiveDataPeriodForGraphs:", isLiveDataPeriodForGraphs, "showCharts:", showCharts);
-   if (showCharts) {
-    console.log("USER ACTIVITY REPORT: Chart Data Processed. Rendering charts...");
-  }
 
 
   return (
@@ -427,14 +420,6 @@ export default function UserActivityReportPage() {
         </CardFooter>
       </Card>
 
-      {/* {dataSourceMsg && (
-        <Alert variant="default" className="mt-4 border-blue-500/50 text-blue-700 dark:border-blue-400/50 dark:text-blue-400 shadow-sm">
-          <Info className="h-5 w-5 text-blue-600 dark:text-blue-500" />
-          <AlertTitle className="font-semibold text-blue-700 dark:text-blue-400">Data Source Note</AlertTitle>
-          <AlertDescription className="text-blue-600 dark:text-blue-500">{dataSourceMsg}</AlertDescription>
-        </Alert>
-      )} */}
-
       {(isLoadingMetrics || isLoadingChartData) && (
         <div className="flex items-center justify-center p-8">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -472,7 +457,7 @@ export default function UserActivityReportPage() {
                 </div>
                 <span className="font-semibold text-lg">{participatedDurationHours} hours</span>
             </div>
-            <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
                     <MessageSquareText className="h-5 w-5 text-purple-500" />
                     <span className="font-medium">Average Message Response Time:</span>
@@ -481,7 +466,7 @@ export default function UserActivityReportPage() {
             </div>
             
             {(metrics.jiraTaskDetails) ? (
-                (metrics.jiraTaskDetails.length > 0 || (jiraTaskStatusCounts.total > 0 && useMockDataForPeriod) ) ? (
+                (metrics.jiraTaskDetails.length > 0 || (jiraTaskStatusCounts.total > 0 && useMockDataForPeriod)) ? (
                     <Accordion type="single" collapsible className="w-full" defaultValue="jira-task-summary">
                     <AccordionItem value="jira-task-summary">
                         <AccordionTrigger className="text-sm font-medium hover:no-underline p-3 border rounded-md bg-secondary/30 data-[state=open]:bg-secondary/40 group">
@@ -517,7 +502,7 @@ export default function UserActivityReportPage() {
                              <span className="font-medium">Jira Tasks Worked On:</span>
                         </div>
                          <span className="font-semibold text-lg">
-                           {isLiveDataPeriodForGraphs ? "0" : "0"}
+                           {isLiveDataPeriodForGraphs || useMockDataForPeriod ? jiraTaskStatusCounts.total : "0"}
                         </span>
                     </div>
                 )
@@ -530,7 +515,7 @@ export default function UserActivityReportPage() {
                     <span className="font-semibold text-lg">Loading...</span>
                 </div>
             )}
-            
+           
             {metrics.error && (
                  <Alert variant="destructive" className="mt-2">
                     <AlertTriangle className="h-4 w-4" />
@@ -544,9 +529,7 @@ export default function UserActivityReportPage() {
       
       {showCharts && (
         <>
-          <p className="text-center text-sm text-muted-foreground mt-4">Chart Data Processed. Rendering charts...</p>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-            {/* Stress Load Chart */}
             <Card className="shadow-md">
               <CardHeader>
                 <div className="flex items-center gap-2">
@@ -570,11 +553,10 @@ export default function UserActivityReportPage() {
               </CardContent>
             </Card>
 
-            {/* Meeting Hours Chart */}
             <Card className="shadow-md">
               <CardHeader>
                   <div className="flex items-center gap-2">
-                      <BarChart2 className="h-5 w-5 text-primary" />
+                      <BarChart2Icon className="h-5 w-5 text-primary" />
                       <CardTitle className="text-md font-semibold">Daily Meeting Hours</CardTitle>
                   </div>
                 <CardDescription>Based on daily activity patterns.</CardDescription>
@@ -594,7 +576,6 @@ export default function UserActivityReportPage() {
               </CardContent>
             </Card>
 
-            {/* Jira Tasks Chart */}
             <Card className="shadow-md">
               <CardHeader>
                   <div className="flex items-center gap-2">
@@ -623,6 +604,14 @@ export default function UserActivityReportPage() {
           </div>
         </>
       )}
+      <ChatbotWidget 
+        pageContext={selectedUser && metrics ? {
+          userId: selectedUser.id,
+          userName: selectedUser.displayName || selectedUser.userPrincipalName || undefined,
+          // Pass other relevant data if available for the chatbot
+        } : undefined}
+      />
     </div>
   );
 }
+
