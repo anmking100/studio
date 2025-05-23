@@ -138,5 +138,7 @@ export interface UserActivityMetrics {
   totalMeetingMinutes: number;
   averageResponseTimeMinutes: number | null; // Placeholder for now
   meetingCount: number;
+  jiraTasksWorkedOnCount: number; // New field
   error?: string;
 }
+

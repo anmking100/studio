@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info, Check, ChevronsUpDown, CheckCircle } from "lucide-react";
+import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info, Check, ChevronsUpDown, CheckCircle, ListChecksIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Calendar } from "@/components/ui/calendar";
@@ -65,6 +65,10 @@ export default function UserActivityReportPage() {
       setMetricsError("Selected user is missing an ID. Cannot generate report.");
       return;
     }
+    if (!selectedUser.userPrincipalName) {
+      setMetricsError("Selected user is missing an email (User Principal Name). Cannot fetch Jira tasks.");
+      return;
+    }
     if (!dateRange?.from || !dateRange?.to) {
       setMetricsError("Please select a valid date range.");
       return;
@@ -77,6 +81,7 @@ export default function UserActivityReportPage() {
     try {
       const params = new URLSearchParams({
         userId: selectedUser.id,
+        userEmail: selectedUser.userPrincipalName, // Pass userEmail for Jira
         startDate: dateRange.from.toISOString(),
         endDate: dateRange.to.toISOString(),
       });
@@ -200,7 +205,7 @@ export default function UserActivityReportPage() {
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
                   <Calendar
-                    mode="single" selected={dateRange?.from} onSelect={(day) => setDateRange(prev => ({ ...prev, from: day || undefined }))}
+                    mode="single" selected={dateRange?.from} onSelect={(day) => setDateRange(prev => ({ ...prev, from: day ? startOfDay(day) : undefined }))}
                     disabled={(date) => date > (dateRange?.to || new Date()) || date > new Date()}
                     initialFocus
                   />
@@ -281,7 +286,14 @@ export default function UserActivityReportPage() {
             </div>
              <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
                 <div className="flex items-center gap-2">
-                    <Info className="h-5 w-5 text-blue-500" />
+                    <ListChecksIcon className="h-5 w-5 text-blue-500" />
+                    <span className="font-medium">Jira Tasks Worked On:</span>
+                </div>
+                <span className="font-semibold text-lg">{metrics.jiraTasksWorkedOnCount} unique tasks</span>
+            </div>
+             <div className="flex items-center justify-between p-3 border rounded-md bg-secondary/30">
+                <div className="flex items-center gap-2">
+                    <Info className="h-5 w-5 text-yellow-500" />
                     <span className="font-medium">Average Message Response Time:</span>
                 </div>
                 <span className="font-semibold text-lg text-muted-foreground">
@@ -301,4 +313,3 @@ export default function UserActivityReportPage() {
     </div>
   );
 }
-

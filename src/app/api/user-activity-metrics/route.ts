@@ -3,12 +3,16 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import * as msal from '@azure/msal-node';
-import { differenceInMinutes, parseISO, startOfDay, endOfDay } from 'date-fns';
-import type { UserActivityMetrics } from '@/lib/types';
+import { differenceInMinutes, parseISO, startOfDay, endOfDay, format } from 'date-fns';
+import type { UserActivityMetrics, JiraIssue } from '@/lib/types';
 
 const TENANT_ID = process.env.MS_TENANT_ID;
 const CLIENT_ID = process.env.MS_CLIENT_ID;
 const CLIENT_SECRET = process.env.MS_CLIENT_SECRET;
+
+const JIRA_INSTANCE_URL = process.env.JIRA_INSTANCE_URL;
+const JIRA_USERNAME = process.env.JIRA_USERNAME;
+const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN;
 
 const SCOPE = ['https://graph.microsoft.com/.default'];
 const AUTHORITY = `https://login.microsoftonline.com/${TENANT_ID}`;
@@ -53,14 +57,61 @@ interface GraphCalendarEvent {
   type?: string; // e.g. "singleInstance", "occurrence", "exception", "seriesMaster"
 }
 
+async function fetchJiraTasks(userEmail: string, startDate: string, endDate: string): Promise<number> {
+  if (!JIRA_INSTANCE_URL || !JIRA_USERNAME || !JIRA_API_TOKEN) {
+    console.warn("USER_ACTIVITY_METRICS_API (Jira): Jira API integration not configured correctly on server for task count.");
+    return 0; // Or throw an error if Jira data is critical for this report
+  }
+  if (!userEmail) {
+    console.warn("USER_ACTIVITY_METRICS_API (Jira): User email not provided, cannot fetch Jira tasks.");
+    return 0;
+  }
+
+  try {
+    const formattedStartDate = format(parseISO(startDate), "yyyy-MM-dd HH:mm");
+    const formattedEndDate = format(parseISO(endDate), "yyyy-MM-dd HH:mm");
+    let jql = `assignee = "${userEmail}" AND updated >= "${formattedStartDate}" AND updated <= "${formattedEndDate}" ORDER BY updated DESC`;
+    
+    const apiUrl = `${JIRA_INSTANCE_URL}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=key`; // Only need 'key' for counting unique tasks
+    console.log(`USER_ACTIVITY_METRICS_API (Jira): Fetching Jira tasks for ${userEmail}, period: ${formattedStartDate} to ${formattedEndDate}. JQL: ${jql}`);
+
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${Buffer.from(`${JIRA_USERNAME}:${JIRA_API_TOKEN}`).toString('base64')}`,
+        'Accept': 'application/json',
+      },
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`USER_ACTIVITY_METRICS_API (Jira): Jira API request failed for user ${userEmail}. Status: ${response.status}, Body: ${errorText.substring(0,200)}`);
+      return 0; // Or throw an error
+    }
+
+    const data = await response.json();
+    const issues: JiraIssue[] = data.issues || [];
+    const uniqueIssueKeys = new Set(issues.map(issue => issue.key));
+    console.log(`USER_ACTIVITY_METRICS_API (Jira): Fetched ${issues.length} issues, ${uniqueIssueKeys.size} unique tasks for ${userEmail}.`);
+    return uniqueIssueKeys.size;
+
+  } catch (error: any) {
+    console.error(`USER_ACTIVITY_METRICS_API (Jira): Unhandled exception fetching Jira tasks for ${userEmail}:`, error.message);
+    return 0; // Or throw
+  }
+}
+
+
 export async function GET(request: NextRequest) {
   console.log('USER_ACTIVITY_METRICS_API: Received GET request.');
   const { searchParams } = new URL(request.url);
-  const userId = searchParams.get('userId');
+  const userId = searchParams.get('userId'); // MS Graph User ID
+  const userEmail = searchParams.get('userEmail'); // User's email for Jira
   const startDateParam = searchParams.get('startDate'); // Expect ISOString
   const endDateParam = searchParams.get('endDate');   // Expect ISOString
 
-  console.log(`USER_ACTIVITY_METRICS_API: Params - userId: ${userId}, startDate: ${startDateParam}, endDate: ${endDateParam}`);
+  console.log(`USER_ACTIVITY_METRICS_API: Params - userId: ${userId}, userEmail: ${userEmail}, startDate: ${startDateParam}, endDate: ${endDateParam}`);
 
   if (!TENANT_ID || !CLIENT_ID || !CLIENT_SECRET) {
     console.error("USER_ACTIVITY_METRICS_API Error: Microsoft Graph API not configured on server.");
@@ -70,7 +121,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (!userId || !startDateParam || !endDateParam) {
+  if (!userId || !startDateParam || !endDateParam) { // userEmail is optional for now if Jira isn't configured
     return NextResponse.json(
       { error: "Missing required query parameters: userId, startDate, and endDate." },
       { status: 400 }
@@ -81,62 +132,71 @@ export async function GET(request: NextRequest) {
   let endDateTimeFilter: string;
 
   try {
+    // Use params directly for filtering Graph API, ensure they are start/end of day for full coverage
     startDateTimeFilter = startOfDay(parseISO(startDateParam)).toISOString();
     endDateTimeFilter = endOfDay(parseISO(endDateParam)).toISOString();
-    console.log(`USER_ACTIVITY_METRICS_API: Fetching calendar events for user ${userId} from ${startDateTimeFilter} to ${endDateTimeFilter}`);
+    console.log(`USER_ACTIVITY_METRICS_API: Fetching MS Graph calendar events for user ${userId} from ${startDateTimeFilter} to ${endDateTimeFilter}`);
   } catch (e) {
     console.error(`USER_ACTIVITY_METRICS_API Error: Invalid date format for startDate or endDate. Params: ${startDateParam}, ${endDateParam}. Error: ${e}`);
     return NextResponse.json({ error: "Invalid date format for startDate or endDate. Please use ISO string." }, { status: 400 });
   }
+  
+  let totalMeetingMinutes = 0;
+  let meetingCount = 0;
+  let jiraTasksWorkedOnCount = 0;
+  let apiError = null;
 
   try {
     const token = await getAccessToken();
     const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json', Prefer: `outlook.timezone="UTC"` };
 
-    const calendarUrl = `https://graph.microsoft.com/v1.0/users/${userId}/calendarView?startDateTime=${encodeURIComponent(startDateTimeFilter)}&endDateTime=${encodeURIComponent(endDateTimeFilter)}&$select=subject,start,end,isAllDay,type&$top=100`; // Increased top to 100
-    console.log(`USER_ACTIVITY_METRICS_API: Calendar API URL (params encoded): ${calendarUrl.split('?')[0]}?startDateTime=...`);
+    const calendarUrl = `https://graph.microsoft.com/v1.0/users/${userId}/calendarView?startDateTime=${encodeURIComponent(startDateTimeFilter)}&endDateTime=${encodeURIComponent(endDateTimeFilter)}&$select=subject,start,end,isAllDay,type&$top=100`;
+    console.log(`USER_ACTIVITY_METRICS_API: MS Graph Calendar API URL (params encoded): ${calendarUrl.split('?')[0]}?startDateTime=...`);
 
     const calendarResponse = await fetch(calendarUrl, { headers, cache: 'no-store' });
-    let totalMeetingMinutes = 0;
-    let meetingCount = 0;
 
     if (calendarResponse.ok) {
       const calendarData = await calendarResponse.json();
       const events: GraphCalendarEvent[] = calendarData.value || [];
-      console.log(`USER_ACTIVITY_METRICS_API: Fetched ${events.length} raw calendar events for user ${userId}.`);
+      console.log(`USER_ACTIVITY_METRICS_API: Fetched ${events.length} raw MS Graph calendar events for user ${userId}.`);
 
       events.forEach(event => {
-        // Filter out all-day events and series masters, similar to teams activity route
         if (!event.isAllDay && event.type !== 'seriesMaster') {
           try {
             const start = parseISO(event.start.dateTime);
             const end = parseISO(event.end.dateTime);
             const duration = differenceInMinutes(end, start);
-            if (duration > 0) { // Only count events with a positive duration
+            if (duration > 0) {
               totalMeetingMinutes += duration;
               meetingCount++;
             }
           } catch (e) {
-            console.warn(`USER_ACTIVITY_METRICS_API: Could not parse dates or calculate duration for event: ${event.subject}`, e);
+            console.warn(`USER_ACTIVITY_METRICS_API: Could not parse dates or calculate duration for MS Graph event: ${event.subject}`, e);
           }
         }
       });
       console.log(`USER_ACTIVITY_METRICS_API: Calculated totalMeetingMinutes: ${totalMeetingMinutes} from ${meetingCount} meetings for user ${userId}.`);
     } else {
       const errorText = await calendarResponse.text();
-      console.error(`USER_ACTIVITY_METRICS_API: Error fetching calendar events for user ${userId}. Status: ${calendarResponse.status}, Body: ${errorText.substring(0, 200)}`);
-      // Do not throw an error here, return what we have or default values
-      return NextResponse.json(
-        { userId, totalMeetingMinutes: 0, averageResponseTimeMinutes: null, meetingCount: 0, error: `Failed to fetch calendar events: ${calendarResponse.statusText}` },
-        { status: calendarResponse.status }
-      );
+      const graphError = `Failed to fetch MS Graph calendar events: ${calendarResponse.statusText} - ${errorText.substring(0,100)}`;
+      console.error(`USER_ACTIVITY_METRICS_API: Error fetching MS Graph calendar events for user ${userId}. Status: ${calendarResponse.status}, Body: ${errorText.substring(0, 200)}`);
+      apiError = graphError;
     }
+
+    // Fetch Jira tasks if userEmail is provided
+    if (userEmail) {
+        // Ensure startDateParam and endDateParam are full ISO strings for Jira fetch
+        jiraTasksWorkedOnCount = await fetchJiraTasks(userEmail, startDateParam, endDateParam);
+    }
+
 
     const metrics: UserActivityMetrics = {
       userId,
       totalMeetingMinutes,
       averageResponseTimeMinutes: null, // Placeholder
       meetingCount,
+      jiraTasksWorkedOnCount,
+      error: apiError || undefined,
     };
     console.log('USER_ACTIVITY_METRICS_API: Successfully processed request. Metrics:', metrics);
     return NextResponse.json(metrics);
