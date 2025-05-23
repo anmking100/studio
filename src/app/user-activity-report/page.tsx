@@ -4,11 +4,10 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info } from "lucide-react";
+import { Loader2, AlertTriangle, UserSearch, CalendarDays, BarChartHorizontalBig, Clock, Info, Check, ChevronsUpDown } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Calendar } from "@/components/ui/calendar";
 import type { DateRange } from "react-day-picker";
 import { format, startOfDay, subDays, endOfDay } from "date-fns";
@@ -16,10 +15,12 @@ import { cn } from "@/lib/utils";
 import type { UserActivityMetrics, MicrosoftGraphUser } from "@/lib/types";
 
 export default function UserActivityReportPage() {
-  const [searchName, setSearchName] = useState("");
   const [allMsGraphUsers, setAllMsGraphUsers] = useState<MicrosoftGraphUser[]>([]);
-  const [isLoadingMsUsers, setIsLoadingMsUsers] = useState(false);
+  const [isLoadingMsUsers, setIsLoadingMsUsers] = useState(true);
   const [msUsersError, setMsUsersError] = useState<string | null>(null);
+
+  const [selectedUser, setSelectedUser] = useState<MicrosoftGraphUser | null>(null);
+  const [isUserSelectOpen, setIsUserSelectOpen] = useState(false);
 
   const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
     const today = new Date();
@@ -32,40 +33,36 @@ export default function UserActivityReportPage() {
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
 
-  const fetchMsGraphUsers = async () => {
-    setIsLoadingMsUsers(true);
-    setMsUsersError(null);
-    try {
-      const response = await fetch("/api/microsoft-graph/users");
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Failed to fetch Microsoft Graph users: ${response.statusText}`);
-      }
-      const data: MicrosoftGraphUser[] = await response.json();
-      setAllMsGraphUsers(data);
-      return data;
-    } catch (err: any) {
-      console.error("Error fetching MS Graph users:", err);
-      setMsUsersError(err.message || "An unknown error occurred while fetching users.");
-      return null;
-    } finally {
-      setIsLoadingMsUsers(false);
-    }
-  };
-  
-  // Optionally pre-fetch users on mount if the list is not too large
-  // Or fetch only when the "Generate Report" button is clicked
-  // For simplicity, let's pre-fetch if not already fetched.
   useEffect(() => {
-    if (allMsGraphUsers.length === 0) {
-      fetchMsGraphUsers();
-    }
-  }, [allMsGraphUsers.length]);
+    const fetchMsGraphUsers = async () => {
+      setIsLoadingMsUsers(true);
+      setMsUsersError(null);
+      try {
+        const response = await fetch("/api/microsoft-graph/users");
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || `Failed to fetch Microsoft Graph users: ${response.statusText}`);
+        }
+        const data: MicrosoftGraphUser[] = await response.json();
+        setAllMsGraphUsers(data.filter(u => u.id && u.displayName)); // Ensure users have id and name
+      } catch (err: any) {
+        console.error("Error fetching MS Graph users:", err);
+        setMsUsersError(err.message || "An unknown error occurred while fetching users.");
+      } finally {
+        setIsLoadingMsUsers(false);
+      }
+    };
+    fetchMsGraphUsers();
+  }, []);
 
 
   const handleGenerateReport = async () => {
-    if (!searchName.trim()) {
-      setMetricsError("Please enter a user name to search.");
+    if (!selectedUser) {
+      setMetricsError("Please select a user.");
+      return;
+    }
+    if (!selectedUser.id) {
+      setMetricsError("Selected user is missing an ID. Cannot generate report.");
       return;
     }
     if (!dateRange?.from || !dateRange?.to) {
@@ -77,50 +74,9 @@ export default function UserActivityReportPage() {
     setMetricsError(null);
     setMetrics(null);
 
-    let usersToSearch = allMsGraphUsers;
-    if (usersToSearch.length === 0 && !isLoadingMsUsers) {
-      // If users weren't pre-fetched or an error occurred, try fetching them now
-      const fetchedUsers = await fetchMsGraphUsers();
-      if (!fetchedUsers) {
-        setMetricsError(msUsersError || "Could not load user list to perform search.");
-        setIsLoadingMetrics(false);
-        return;
-      }
-      usersToSearch = fetchedUsers;
-    }
-    
-    if (usersToSearch.length === 0) {
-        setMetricsError("User list is empty. Cannot perform search.");
-        setIsLoadingMetrics(false);
-        return;
-    }
-
-    const foundUsers = usersToSearch.filter(
-      (user) => user.displayName?.toLowerCase() === searchName.trim().toLowerCase()
-    );
-
-    if (foundUsers.length === 0) {
-      setMetricsError(`User "${searchName.trim()}" not found. Please check the name and try again. You can find user display names on the "MS Graph Users" integration page.`);
-      setIsLoadingMetrics(false);
-      return;
-    }
-
-    if (foundUsers.length > 1) {
-      setMetricsError(`Multiple users found with the name "${searchName.trim()}". Please use a more specific name or check for duplicate display names.`);
-      setIsLoadingMetrics(false);
-      return;
-    }
-
-    const targetUserId = foundUsers[0].id;
-    if (!targetUserId) {
-        setMetricsError(`User "${searchName.trim()}" found, but is missing an ID. Cannot generate report.`);
-        setIsLoadingMetrics(false);
-        return;
-    }
-
     try {
       const params = new URLSearchParams({
-        userId: targetUserId,
+        userId: selectedUser.id,
         startDate: dateRange.from.toISOString(),
         endDate: dateRange.to.toISOString(),
       });
@@ -162,45 +118,78 @@ export default function UserActivityReportPage() {
       <Card>
         <CardHeader>
           <CardTitle>Report Parameters</CardTitle>
-          <CardDescription>Enter a user's full display name and select a date range.</CardDescription>
+          <CardDescription>Select a user and a date range to generate their activity report.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <Label htmlFor="user-name">User Full Display Name</Label>
-            <Input
-              id="user-name"
-              type="text"
-              placeholder="E.g., Govardhan k"
-              value={searchName}
-              onChange={(e) => setSearchName(e.target.value)}
-              className="mt-1"
-            />
-             <p className="text-xs text-muted-foreground mt-1">
-              Hint: Enter the exact display name. You can find display names on the "MS Graph Users" integration page.
-            </p>
+            <label htmlFor="user-select" className="block text-sm font-medium text-foreground mb-1">User</label>
+            <Popover open={isUserSelectOpen} onOpenChange={setIsUserSelectOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={isUserSelectOpen}
+                  className="w-full justify-between"
+                  disabled={isLoadingMsUsers || allMsGraphUsers.length === 0}
+                >
+                  {isLoadingMsUsers ? "Loading users..." : selectedUser ? selectedUser.displayName : "Select user..."}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+                <Command>
+                  <CommandInput placeholder="Search user..." />
+                  <CommandList>
+                    <CommandEmpty>
+                      {isLoadingMsUsers ? "Loading..." : msUsersError ? "Error loading users." : "No user found."}
+                    </CommandEmpty>
+                    <CommandGroup>
+                      {allMsGraphUsers.map((user) => (
+                        <CommandItem
+                          key={user.id}
+                          value={user.displayName || user.userPrincipalName}
+                          onSelect={() => {
+                            setSelectedUser(user);
+                            setIsUserSelectOpen(false);
+                            setMetrics(null); 
+                            setMetricsError(null);
+                          }}
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              selectedUser?.id === user.id ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          <div>
+                            <p>{user.displayName}</p>
+                            <p className="text-xs text-muted-foreground">{user.userPrincipalName}</p>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+            {msUsersError && !isLoadingMsUsers && (
+              <Alert variant="destructive" className="mt-2 text-xs">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle className="text-xs">Error Loading Users</AlertTitle>
+                <AlertDescription className="text-xs">{msUsersError}</AlertDescription>
+              </Alert>
+            )}
           </div>
-          {isLoadingMsUsers && (
-            <div className="flex items-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Loading user list...
-            </div>
-          )}
-          {msUsersError && !isLoadingMsUsers && (
-            <Alert variant="destructive" className="mt-2">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Error Loading Users</AlertTitle>
-              <AlertDescription>{msUsersError}</AlertDescription>
-            </Alert>
-          )}
+          
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
-              <Label htmlFor="start-date-popover">Start Date</Label>
+              <label htmlFor="start-date-popover" className="block text-sm font-medium text-foreground mb-1">Start Date</label>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
                     id="start-date-popover"
                     variant={"outline"}
-                    className={cn("w-full justify-start text-left font-normal mt-1", !dateRange?.from && "text-muted-foreground")}
+                    className={cn("w-full justify-start text-left font-normal", !dateRange?.from && "text-muted-foreground")}
                   >
                     <CalendarDays className="mr-2 h-4 w-4" />
                     {dateRange?.from ? format(dateRange.from, "LLL dd, yyyy") : <span>Pick a start date</span>}
@@ -216,13 +205,13 @@ export default function UserActivityReportPage() {
               </Popover>
             </div>
             <div className="flex-1">
-              <Label htmlFor="end-date-popover">End Date</Label>
+              <label htmlFor="end-date-popover" className="block text-sm font-medium text-foreground mb-1">End Date</label>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
                     id="end-date-popover"
                     variant={"outline"}
-                    className={cn("w-full justify-start text-left font-normal mt-1", !dateRange?.to && "text-muted-foreground")}
+                    className={cn("w-full justify-start text-left font-normal", !dateRange?.to && "text-muted-foreground")}
                   >
                     <CalendarDays className="mr-2 h-4 w-4" />
                     {dateRange?.to ? format(dateRange.to, "LLL dd, yyyy") : <span>Pick an end date</span>}
@@ -240,8 +229,8 @@ export default function UserActivityReportPage() {
           </div>
         </CardContent>
         <CardFooter>
-          <Button onClick={handleGenerateReport} disabled={isLoadingMetrics || isLoadingMsUsers}>
-            {isLoadingMetrics || isLoadingMsUsers ? (
+          <Button onClick={handleGenerateReport} disabled={isLoadingMetrics || isLoadingMsUsers || !selectedUser}>
+            {isLoadingMetrics ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
               <UserSearch className="mr-2 h-4 w-4" />
@@ -267,7 +256,7 @@ export default function UserActivityReportPage() {
       {metrics && !isLoadingMetrics && (
         <Card>
           <CardHeader>
-            <CardTitle>Activity Summary for {metrics.userId && allMsGraphUsers.find(u=>u.id === metrics.userId)?.displayName || searchName}</CardTitle>
+            <CardTitle>Activity Summary for {selectedUser?.displayName || "Selected User"}</CardTitle>
             <CardDescription>
               Report for the period: {dateRange?.from ? format(dateRange.from, "PP") : ""} - {dateRange?.to ? format(dateRange.to, "PP") : ""}
             </CardDescription>
